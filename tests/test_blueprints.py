@@ -54,6 +54,10 @@ EXPECTED_ENTRY_POINTS = {
     "dual-openyam-collection": "kiteos.blueprints.collection:dual_openyam_collection",
     "dual-openyam-rollout": "kiteos.blueprints.rollout:dual_openyam_rollout",
     "dual-openyam-rollout-recorded": "kiteos.blueprints.rollout:dual_openyam_rollout_recorded",
+    "openarm-teleop": "kiteos.blueprints.openarm:openarm_teleop",
+    "openarm-collection": "kiteos.blueprints.openarm:openarm_collection",
+    "openarm-rollout": "kiteos.blueprints.openarm:openarm_rollout",
+    "openarm-rollout-recorded": "kiteos.blueprints.openarm:openarm_rollout_recorded",
 }
 TELEOP_INSTANCES = {"armteleopmodule", "ControlCoordinator", "manipulationmodule"}
 COLLECTION_INSTANCES = TELEOP_INSTANCES | set(CAMERA_ROLES) | {"recorder", "episodes"}
@@ -241,13 +245,16 @@ def test_collection_composition(collection):
     from dimos.hardware.sensors.camera.module import CameraModule
     from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 
+    from kiteos.blueprints.cameras import KiteCameraModule
+
     atoms = _atoms(collection.dual_openyam_collection)
     assert set(atoms) == COLLECTION_INSTANCES
     assert atoms["ControlCoordinator"].module is coordinator_cls
     assert atoms["episodes"].module is EpisodeMonitorModule
     for role in CAMERA_ROLES:
         camera = atoms[role]
-        assert camera.module is CameraModule
+        # The runtime's camera module, plus the synthetic device "mock" for runs without cameras.
+        assert camera.module is KiteCameraModule and issubclass(KiteCameraModule, CameraModule)
         hardware = camera.kwargs["hardware"]
         assert (hardware.width, hardware.height, hardware.fps) == (640, 480, 30)
         assert hardware.frame_id_prefix == f"{role}_image"

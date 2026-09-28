@@ -72,9 +72,12 @@ def policy_blueprint(
     task: str | None = None,
     device: str | None = None,
     fps: float = POLICY_FPS,
+    joint_names: list[str] | None = None,
+    gripper_joints: list[str] | None = None,
+    robot_type: str = ROBOT_TYPE,
     **guards: Any,
 ) -> Blueprint:
-    """The dual-arm policy module.
+    """The dual-arm policy module (default: the dual OpenYAM's joints and robot type).
 
     Values left as ``None`` are not pinned, so ``policy_path`` and ``task``
     must then come from ``--policy.policy-path`` / ``--policy.task``, and the
@@ -91,10 +94,10 @@ def policy_blueprint(
     }
     return DualArmPolicyModule.blueprint(
         instance_name=POLICY_INSTANCE_NAME,
-        joint_names=list(DUAL_OPENYAM_JOINTS),
-        gripper_joints=list(DUAL_OPENYAM_GRIPPER_JOINTS),
+        joint_names=list(joint_names if joint_names is not None else DUAL_OPENYAM_JOINTS),
+        gripper_joints=list(gripper_joints if gripper_joints is not None else DUAL_OPENYAM_GRIPPER_JOINTS),
         fps=fps,
-        robot_type=ROBOT_TYPE,
+        robot_type=robot_type,
         image_width=CAMERA_WIDTH,
         image_height=CAMERA_HEIGHT,
         **pinned,

@@ -8,8 +8,11 @@ Three zone kinds, each expressed in one of three frames:
 * ``box``         -- a forbidden solid box (a fixture, a monitor, the space above a conveyor).
 * ``keep_in_box`` -- the allowed volume; every sphere must stay fully inside it.
 
-Frames: ``dual_openyam_base`` (world), ``left_base`` and ``right_base`` (an arm's own base,
-placed by the fence config's mount). Box orientation uses URDF roll-pitch-yaw
+Frames: ``world`` (the robot's world frame, also by its own name: ``dual_openyam_base`` for the
+dual OpenYAM, ``openarm_body_link0`` for the OpenArm), ``left_base`` and ``right_base`` (an arm's
+own base, placed by the fence config's mount). A zone without a frame is in ``dual_openyam_base``
+on the dual OpenYAM (for older fence files) and in ``world`` on other robots; the fence config
+checks every zone's frame against its robot. Box orientation uses URDF roll-pitch-yaw
 (``Rz(yaw) @ Ry(pitch) @ Rx(roll)``) relative to the zone frame.
 
 Clearance is the signed distance from a sphere's surface to the forbidden region, in metres:
@@ -20,16 +23,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Annotated, Literal, get_args
+from typing import Annotated, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
 
+from kiteos.robots import ROBOTS, WORLD_ALIAS
 from kiteos.safety.kinematics import WORLD_FRAME, pose_matrix
 
-Frame = Literal["dual_openyam_base", "left_base", "right_base"]
+# A zone frame name; which ones a fence may use depends on its robot (``RobotProfile.zone_frames``).
+Frame = str
 AppliesTo = Literal["both", "left", "right"]
-FRAMES: tuple[str, ...] = get_args(Frame)
+FRAMES: tuple[str, ...] = tuple(dict.fromkeys(f for robot in ROBOTS.values() for f in robot.zone_frames))
 Vec3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
 
 _MIN_NORMAL = 1e-9
@@ -41,9 +46,16 @@ class _ZoneBase(BaseModel):
     # Declared first so dumped YAML reads "kind, name, ..."; each subclass narrows it.
     kind: str
     name: str = Field(min_length=1)
-    frame: Frame = "dual_openyam_base"
+    frame: Frame = WORLD_FRAME
     applies_to: AppliesTo = "both"
     enabled: bool = True
+
+    @field_validator("frame")
+    @classmethod
+    def _known_frame(cls, v: str) -> str:
+        if v not in FRAMES:
+            raise ValueError(f"unknown frame {v!r}; use one of: {', '.join(FRAMES)}")
+        return v
 
     def applies(self, side: str) -> bool:
         """Whether this zone is enabled and constrains ``side``."""
@@ -103,9 +115,9 @@ Zone = Annotated[HalfSpaceZone | BoxZone | KeepInBox, Field(discriminator="kind"
 ZONE_KINDS: tuple[str, ...] = ("half_space", "box", "keep_in_box")
 
 
-def frame_transforms(mounts: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+def frame_transforms(mounts: Mapping[str, np.ndarray], world_frame: str = WORLD_FRAME) -> dict[str, np.ndarray]:
     """World pose of every zone frame, from the per-side arm mounts (4x4)."""
-    out = {WORLD_FRAME: np.eye(4)}
+    out = {WORLD_ALIAS: np.eye(4), world_frame: np.eye(4)}
     for side, T in mounts.items():
         out[f"{side}_base"] = np.asarray(T, dtype=float)
     return out
@@ -114,8 +126,8 @@ def frame_transforms(mounts: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
 def _frame_pose(zone: _ZoneBase, frame_T: Mapping[str, np.ndarray]) -> np.ndarray:
     T = frame_T.get(zone.frame)
     if T is None:
-        if zone.frame == WORLD_FRAME:
-            return np.eye(4)
+        if WORLD_ALIAS not in frame_T and zone.frame in (WORLD_FRAME, WORLD_ALIAS):
+            return np.eye(4)  # a bare frame table (no robot): the world frame is the identity
         raise ValueError(
             f"zone {zone.name!r} uses frame {zone.frame!r} but no pose is known for it"
         )

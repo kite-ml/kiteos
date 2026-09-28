@@ -112,11 +112,11 @@ def load_registry(station: StationConfig) -> dict[str, str]:
 
 def resolve_setup(name: str, registry: Mapping[str, str], plugins: Mapping[str, str] | None = None) -> Setup:
     """The setup to run, or ``SetupRunError`` (KiteOS setups have their own commands)."""
-    kiteos_names = {spec.name for spec in launch.BLUEPRINTS.values()}
+    kiteos_names = {spec.name for _, _, spec in launch.all_setup_specs()}
     if name.startswith(f"{launch.DIST_NAME}.") or name in kiteos_names:
         raise SetupRunError(
             f"{name} is a KiteOS setup: start it with `kiteos teleop`, `kiteos collect start` or "
-            "`kiteos rollout start` (they add the station file and the fence)"
+            "`kiteos rollout start` on a station for its robot (they add the station file and the fence)"
         )
     if name in registry:
         return Setup(name, registry[name], embodiments.classify(name, registry[name]))
@@ -150,9 +150,9 @@ def mode_runtime_options(setup: Setup, mode: Mode, engine: str | None) -> tuple[
     if mode == "real":
         if setup.embodiment.fenced:
             raise SetupRunError(
-                f"{setup.name} drives the dual OpenYAM without the KiteOS fence. Drive the real arms with "
-                "`kiteos teleop`, `kiteos collect start` or `kiteos rollout start`: they enforce the fence "
-                "(the keep-out zones such as the glass)."
+                f"{setup.name} drives the {setup.embodiment.title} without the KiteOS fence. Drive the "
+                "real arms with `kiteos teleop`, `kiteos collect start` or `kiteos rollout start` on a "
+                "station for this robot: they enforce the fence (the keep-out zones such as the glass)."
             )
         return [], "real"
     if mode == "sim":
@@ -270,19 +270,24 @@ def list_setups(
     setups = [
         s for s in embodiments.catalog(load_registry(config), plugin_setups()) if wanted is None or s.embodiment == wanted
     ]
-    kiteos_setups = [] if wanted not in (None, embodiments.BY_KEY["dual-openyam"]) else list(launch.BLUEPRINTS.items())
+    kiteos_setups = [
+        (robot, kind, spec)
+        for robot, kind, spec in launch.all_setup_specs()
+        if wanted is None or wanted.key == robot.key
+    ]
     if as_json:
         data = {
             "runtime_root": str(config.runtime_root_path()),
+            "station_robot": config.robot,
             "kiteos": [
                 {
                     "setup": spec.run_name,
-                    "command": KITEOS_COMMANDS[key],
+                    "command": KITEOS_COMMANDS[kind],
                     "description": spec.description,
-                    "embodiment": "dual-openyam",
+                    "embodiment": robot.key,
                     "fenced": True,
                 }
-                for key, spec in kiteos_setups
+                for robot, kind, spec in kiteos_setups
             ],
             "setups": [
                 {
@@ -305,10 +310,19 @@ def list_setups(
         typer.echo(json.dumps(data, indent=2))
         return
     if kiteos_setups:
-        console.print("[kite]KiteOS setups[/kite]: dual OpenYAM with the KiteOS fence (keep-out zones enforced)")
-        width = max(len(KITEOS_COMMANDS[key]) for key, _ in kiteos_setups)
-        for key, spec in kiteos_setups:
-            console.print(f"  {KITEOS_COMMANDS[key]:<{width}}  {spec.run_name} · {spec.description}", soft_wrap=True)
+        console.print(
+            "[kite]KiteOS setups[/kite]: the robots KiteOS fences (keep-out zones enforced). The commands start "
+            f"the setup for the station's robot ({config.profile.title} on this station, `robot:` in the station file).",
+            soft_wrap=True,
+        )
+        width = max(len(KITEOS_COMMANDS[kind]) for _, kind, _ in kiteos_setups)
+        current = None
+        for robot, kind, spec in kiteos_setups:
+            if robot.key != current:
+                current = robot.key
+                here = " · this station" if robot.key == config.robot else ""
+                console.print(f"  [accent]{escape(robot.title)}[/accent] [muted](robot: {robot.key}{here})[/muted]")
+            console.print(f"    {KITEOS_COMMANDS[kind]:<{width}}  {spec.run_name} · {spec.description}", soft_wrap=True)
         console.print()
     groups: dict[str, list[Setup]] = {}
     for setup in setups:

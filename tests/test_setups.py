@@ -172,8 +172,10 @@ def test_classify(name: str, target: str, key: str) -> None:
     assert classify(name, target).key == key
 
 
-def test_only_the_dual_openyam_is_fenced() -> None:
-    assert [e.key for e in embodiments.BY_KEY.values() if e.fenced] == ["dual-openyam"]
+def test_the_robots_kiteos_fences_are_fenced() -> None:
+    from kiteos.robots import ROBOTS
+
+    assert sorted(e.key for e in embodiments.BY_KEY.values() if e.fenced) == sorted(ROBOTS)
 
 
 def test_catalog_orders_by_embodiment_then_name() -> None:
@@ -216,8 +218,8 @@ def test_checked_table_matches_the_pinned_runtime() -> None:
     assert not set(embodiments.ALWAYS_REAL_NOTES) - set(registry)
     grouped = embodiments.catalog(registry)
     assert not [s.name for s in grouped if s.embodiment is embodiments.OTHER], "classify the new setups"
-    dual = {s.name for s in grouped if s.embodiment.fenced}
-    assert dual == {n for n, t in registry.items() if ".dual_openyam." in t}
+    fenced = {s.name for s in grouped if s.embodiment.fenced}
+    assert fenced == {n for n, t in registry.items() if ".dual_openyam." in t or ".openarm." in t}
 
 
 # =========================================================================== planning a run

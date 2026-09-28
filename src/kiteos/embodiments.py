@@ -59,7 +59,9 @@ EMBODIMENTS: tuple[Embodiment, ...] = (
         words=("xarm", "xarm6", "xarm7", "lite6"),
     ),
     Embodiment("piper", "AgileX Piper arm", modules=("robot.manipulators.piper",), words=("piper",)),
-    Embodiment("openarm", "OpenArm (bimanual arms)", modules=("robot.manipulators.openarm",), words=("openarm",)),
+    Embodiment(
+        "openarm", "OpenArm (bimanual arms)", modules=("robot.manipulators.openarm",), words=("openarm",), fenced=True
+    ),
     Embodiment("a1z", "Galaxea A1Z arm", modules=("robot.manipulators.a1z",), words=("a1z",)),
     Embodiment("a750", "A-750 arm", modules=("robot.manipulators.a750",), words=("a750",)),
     Embodiment(

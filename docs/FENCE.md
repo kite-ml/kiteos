@@ -1,7 +1,8 @@
 # KiteOS safety fence
 
-The fence keeps the dual OpenYAM arms out of the space you declare forbidden, such as a customer's
-glass window, a monitor or a shelf. It is a software guard that runs on the KiteOS control
+The fence keeps a robot's arms out of the space you declare forbidden, such as a customer's glass
+window, a monitor or a shelf. It protects the two robots KiteOS runs with its own setups: the dual
+OpenYAM and the OpenArm (the fence file's `robot:` says which). It is a software guard that runs on the KiteOS control
 coordinator. It does **not** replace physical safeguards: an emergency stop within reach, an
 operator watching the arms, and reduced speed near people and fragile objects.
 
@@ -62,13 +63,23 @@ Some other rules apply:
 
 ### Geometry
 
-The URDF has no collision shapes, so KiteOS covers each arm with 14 spheres. They were fitted to
-the visual meshes and each radius includes a 5 mm pad. From base to gripper: 1 on link1, 3 on
-link2, 4 on link3, 2 on link4, 1 on link5 and 3 on the gripper including the closed fingers.
+**Dual OpenYAM.** The URDF has no collision shapes, so KiteOS covers each arm with 14 spheres.
+They were fitted to the visual meshes and each radius includes a 5 mm pad. From base to gripper: 1
+on link1, 3 on link2, 4 on link3, 2 on link4, 1 on link5 and 3 on the gripper including the closed
+fingers. The last two gripper spheres cover the fingers.
 
-The fingers are modelled closed. The last two gripper spheres therefore grow by
-`gripper_stroke_m × opening`, where opening is between 0 (closed) and 1 (open). An unknown
-opening counts as fully open. This growth is the same in every direction, so it is conservative.
+**OpenArm.** 23 spheres per arm, fitted by `tools/fit_link_spheres.py` to the collision and visual
+meshes of `enactic/openarm_description` (every vertex and 40,000 surface samples per mesh are
+inside, each radius includes a 5 mm pad): 1 on base_link, 2 each on link1, link2, link4, link5 and
+link6, 3 on link3, 1 on the hand (ee_base_link) and 4 on each finger (ee_link1, ee_link2). The left
+arm's meshes are mirrored, so each side has its own table (`src/kiteos/data/openarm_v20_spheres.json`).
+The fingertip is the closed fingers' distal end, 3.2 cm beyond the grasp frame.
+
+The fingers are modelled closed. The finger spheres therefore grow by `gripper_stroke_m ×
+opening`, where opening is between 0 (closed) and 1 (open). An unknown opening counts as fully
+open. This growth is the same in every direction, so it is conservative. The OpenArm's pinch
+fingers swing 45°; its default stroke, 0.081 m, bounds how far any finger point moves at any
+opening.
 
 Anything else attached to the arm must be added under `extra_spheres`. That includes wrist
 cameras, cables and held tools.
@@ -88,21 +99,32 @@ plus `gripper_stroke_m × opening` when the gripper is open.
 Every zone also has these fields:
 
 - `name` (unique)
-- `frame`: default `dual_openyam_base`
+- `frame`: default `dual_openyam_base` on the dual OpenYAM, `world` on the OpenArm
 - `applies_to`: `both`, `left` or `right`
 - `enabled`: default `true`
 
 The frames are:
 
-- `dual_openyam_base`: the robot world frame. +x points forward (the direction the grippers face at
-  home), +y points toward the left arm, +z points up, and z = 0 is the mounting surface of the arm
-  bases.
+- `world`: the robot's world frame, also called by its URDF name:
+  - `dual_openyam_base` (dual OpenYAM): +x points forward (the direction the grippers face at
+    home), +y points toward the left arm, +z points up, and z = 0 is the mounting surface of the
+    arm bases.
+  - `openarm_body_link0` (OpenArm): +x forward, +y toward the left arm, +z up, z = 0 at the bottom
+    of the body. The arm bases (shoulders) are 0.698 m up, 3.1 cm either side of the centre.
 - `left_base` and `right_base`: one arm's own base frame, placed by `mounts`. Use these frames when
   the spacing between the arms has not been measured. Zones taught per arm stay correct whatever
   the spacing.
 
 Box orientation uses URDF roll-pitch-yaw in radians, relative to the zone frame
 (R = Rz(yaw)·Ry(pitch)·Rx(roll)). All lengths are in metres.
+
+### In the viewer
+
+KiteOS setups draw the enabled zones in the viser viewer, next to the robot, and add them to the
+planner's world, so planned motions keep out of them too. A half-space is drawn as a 10 cm pane on
+its forbidden side, centred on the arms and wide enough to cover their reach; a box as itself; a
+keep-in box is not drawn. The viewer shows the zones the stack started with. The planner and the
+viewer are aids only: the coordinator enforces the fence.
 
 ## What the fence does not guarantee
 
@@ -139,12 +161,13 @@ Box orientation uses URDF roll-pitch-yaw in radians, relative to the zone frame
 | field | default | meaning |
 | --- | --- | --- |
 | `version` | `1` | schema version |
+| `robot` | `dual-openyam` | the robot the fence protects: `dual-openyam` or `openarm`. A stack refuses a fence written for another robot |
 | `station` | `""` | free-text station name |
 | `mode` | `enforce` | `enforce` or `monitor` (log only; refused on real hardware) |
 | `margin_m` | `0.05` | minimum distance between any sphere surface and any zone; **must be ≥ 0.02** |
-| `gripper_stroke_m` | `0.05` | how far ONE finger travels from closed to fully open; the finger spheres grow by this at opening 1.0. Replace it with the measured value |
-| `mounts.left` / `mounts.right` | `xyz (0, ±0.31, 0)`, `rpy (0,0,0)` | pose of each arm base in `dual_openyam_base`; both sides are required; at most 2 m from the origin |
-| `extra_spheres[]` | `[]` | `name`, `side` (`left`, `right` or `both`), `link` (`base`, `link1`–`link5`, `gripper`, `tip_left`, `tip_right`, `grasp_frame`), `center` (in the link frame, at most 0.3 m from its origin), `radius` (> 0, at most 0.2 m) |
+| `gripper_stroke_m` | `0.05` (OpenArm `0.081`) | how far ONE finger travels from closed to fully open; the finger spheres grow by this at opening 1.0. Replace the dual OpenYAM default with the measured value |
+| `mounts.left` / `mounts.right` | dual OpenYAM `xyz (0, ±0.31, 0)`; OpenArm `xyz (0, ±0.031, 0.698)`; `rpy (0,0,0)` | pose of each arm base in the world frame; both sides are required; at most 2 m from the origin |
+| `extra_spheres[]` | `[]` | `name`, `side` (`left`, `right` or `both`), `link` (the robot's links without the side prefix: dual OpenYAM `base`, `link1`–`link5`, `gripper`, `tip_left`, `tip_right`, `grasp_frame`; OpenArm `base_link`, `link1`–`link6`, `ee_base_link`, `ee_link1`, `ee_link2`, `grasp_frame`), `center` (in the link frame, at most 0.3 m from its origin), `radius` (> 0, at most 0.2 m) |
 | `zones[]` | `[]` | see Zones and frames |
 | `max_joint_speed_rad_s` | `2.5` | final rate limit on commanded arm targets; real hardware refuses more than 3.0 |
 | `joint_limit_margin_rad` | `0.01` | distance kept inside the URDF joint limits |
@@ -333,9 +356,10 @@ free ports, so it cannot reach a stack running on the default bus. Set
 
 ## Limitations
 
-- **Model accuracy.** The kinematics come from the vendored dual OpenYAM URDF, which has visual
-  meshes only. The spheres cover those meshes with a 5 mm pad. Any mismatch between the model and
-  the real arm (link lengths, motor zero, flex) moves the real arm relative to the fence.
+- **Model accuracy.** The kinematics come from the vendored URDF (the dual OpenYAM's has visual
+  meshes only; the OpenArm's is the expanded `enactic/openarm_description` model). The spheres
+  cover the meshes with a 5 mm pad. Any mismatch between the model and the real arm (link
+  lengths, motor zero, flex) moves the real arm relative to the fence.
 - **Mount spacing.** The URDF's 0.62 m spacing between the bases comes from a simulation scene.
   Measure the spacing and set `mounts`, or teach zones per arm in `left_base`/`right_base`.
 - **Wrist cameras and cables are not in the URDF.** Add each one as an `extra_spheres` entry on

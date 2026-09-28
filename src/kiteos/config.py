@@ -1,8 +1,10 @@
 # Copyright 2026 Kite ML.
 """Station configuration: everything site-specific about one KiteOS rig.
 
-A station file (YAML) names the rig, its task, the CAN adapters and cameras per
-host OS, the fence file, data directories, the Hub repository and the policy.
+A station file (YAML) names the rig, its robot (``dual-openyam``, the default, or ``openarm``),
+its task, the CAN adapters and cameras per host OS, the fence file, data directories, the Hub
+repository and the policy. A camera may be ``mock`` (a synthetic test pattern) for runs
+without camera hardware; ``--real`` refuses mock cameras.
 Lookup order for :meth:`StationConfig.load` without an explicit path:
 
 1. ``$KITEOS_STATION``
@@ -33,6 +35,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
+from kiteos.robots import DEFAULT_ROBOT, RobotKey, RobotProfile, get_robot
 from kiteos.yamlio import load_yaml_unique
 
 Side = Literal["left", "right"]
@@ -46,6 +49,7 @@ DEFAULT_RUNTIME_ROOT = "~/teleop_stack/kiteos-runtime"
 LEGACY_RUNTIME_KEY = "dimos_root"  # pre-0.1.1 name of runtime_root, still accepted
 ROOT_ENV = "KITEOS_ROOT"
 PLACEHOLDER_MARK = "REPLACE"
+MOCK_CAMERA = "mock"  # synthetic test-pattern camera (kiteos.blueprints.cameras)
 
 
 class StationError(RuntimeError):
@@ -68,6 +72,11 @@ def platform_key() -> PlatformKey:
 def is_placeholder(value: object) -> bool:
     """True for unfilled template values such as ``/dev/v4l/by-path/REPLACE``."""
     return isinstance(value, str) and PLACEHOLDER_MARK in value
+
+
+def is_mock_camera(value: object) -> bool:
+    """True for the synthetic camera ``mock`` (never usable with real arms)."""
+    return isinstance(value, str) and value.strip().lower() == MOCK_CAMERA
 
 
 def slugify(text: str) -> str:
@@ -126,6 +135,7 @@ class StationConfig(_Model):
     """Validated contents of a station YAML file."""
 
     station: str = Field(min_length=1)
+    robot: RobotKey = DEFAULT_ROBOT
     task: str = Field(min_length=1)
     session_prefix: str | None = None
     can: dict[Side, PlatformValues]
@@ -288,6 +298,15 @@ class StationConfig(_Model):
             if value.startswith("~"):
                 return str(Path(value).expanduser())
         return value
+
+    @property
+    def profile(self) -> RobotProfile:
+        """The robot this station runs (see ``kiteos.robots``)."""
+        return get_robot(self.robot)
+
+    def mock_cameras(self) -> list[str]:
+        """Camera roles that are the synthetic ``mock`` camera on this host."""
+        return [role for role in CAMERA_ROLES if is_mock_camera(self.camera(role))]
 
     def fence_path(self) -> Path:
         return self.resolve_path(self.fence)

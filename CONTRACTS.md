@@ -27,7 +27,8 @@ src/kiteos/__init__.py          # __version__ = "0.1.1"; BRAND constants only
 src/kiteos/brand.py             # BRAND_NAME="KiteOS", colors, ascii banner
 src/kiteos/config.py            # StationConfig (see below)
 src/kiteos/safety/__init__.py
-src/kiteos/safety/kinematics.py # numpy FK for dual OpenYAM
+src/kiteos/robots.py            # RobotProfile per fenced robot: DUAL_OPENYAM (default), OPENARM
+src/kiteos/safety/kinematics.py # numpy FK for either robot (robot= a RobotProfile or key)
 src/kiteos/safety/geometry.py   # covering spheres per link
 src/kiteos/safety/zones.py      # zone models + signed distance
 src/kiteos/safety/fence.py      # FenceConfig, FenceChecker, FenceReport
@@ -228,6 +229,10 @@ dual-openyam-teleop     = "kiteos.blueprints.teleop:dual_openyam_teleop"
 dual-openyam-collection = "kiteos.blueprints.collection:dual_openyam_collection"
 dual-openyam-rollout    = "kiteos.blueprints.rollout:dual_openyam_rollout"
 dual-openyam-rollout-recorded = "kiteos.blueprints.rollout:dual_openyam_rollout_recorded"
+openarm-teleop          = "kiteos.blueprints.openarm:openarm_teleop"
+openarm-collection      = "kiteos.blueprints.openarm:openarm_collection"
+openarm-rollout         = "kiteos.blueprints.openarm:openarm_rollout"
+openarm-rollout-recorded = "kiteos.blueprints.openarm:openarm_rollout_recorded"
 ```
 The runtime launches them by name (`kiteos.dual-openyam-teleop` etc.; the CLI does this). All use `KiteDualOpenYamCoordinator` with
 instance_name "ControlCoordinator" (so flags are `--controlcoordinator.left-can-port`,
@@ -288,3 +293,28 @@ quest: {port: 8080, upstream: https://127.0.0.1:8443, adb: auto}
   (the runtime's client connection -> ControlCoordinator RPC `fence_status`/`fence_check`); `teach` records fingertip points
   from live joint positions (RPC `get_joint_state` or the coordinator_joint_state stream) and fits a plane;
   `test` runs an offline sweep and replays LeRobot datasets through the fence.
+
+## Robots (kiteos.robots) — added in 0.1.1
+
+`RobotProfile` holds everything robot-specific: vendored URDF (`kiteos/data`), world frame, `dof`,
+arm/gripper joint names (= the runtime component's joint names), link prefix and chain root per
+side, required links, fingertip, covering spheres (inline for the dual OpenYAM; JSON
+`openarm_v20_spheres.json` for the OpenArm, per side because the left arm is mirrored), finger
+spheres and gripper stroke, default mounts, hold gains, the real adapter type, dataset
+`robot_type`, wrist links, reference poses and the four KiteOS setup names.
+
+- `FenceConfig.robot` (`dual-openyam` default, `openarm`) selects the profile; mounts and
+  `gripper_stroke_m` default to the robot's; zone frames are `world`, the robot's world frame
+  (`dual_openyam_base` / `openarm_body_link0`), `left_base`, `right_base`; extra-sphere links
+  must be the robot's. On the dual OpenYAM a zone without a frame is in `dual_openyam_base`; on
+  other robots in `world`.
+- `FenceChecker(config).robot` / `.dof`; `DualArmKinematics(mounts, urdf_path, robot)`;
+  `SphereModel.for_arm(side, extra, robot)`; `FencedWholeBodyAdapter` takes joints and hold gains
+  from `checker.robot` and refuses `reload` of another robot's fence.
+- Coordinators: `FencedCoordinatorMixin` (fence logic, `ROBOT` class attribute) +
+  `KiteDualOpenYamCoordinator(…, DualOpenYamCoordinator)` and
+  `KiteOpenArmCoordinator(…, OpenArmTeleopCoordinator)`; configs add `KiteFenceSettings`
+  (`fence_path`, `require_fence_on_hardware`, `expect_mock`). A fence for another robot is refused.
+- Station: `robot:` field; `launch.setup_spec(robot, kind)` names the setup
+  (`kiteos.<robot>-<kind>`); cameras may be `mock` (`KiteCameraModule` test pattern), refused on
+  `--real`.

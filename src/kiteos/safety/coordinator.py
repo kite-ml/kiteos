@@ -1,13 +1,17 @@
 # Copyright 2026 Kite ML.
-"""KiteOS Dual OpenYAM coordinator: the runtime's ``DualOpenYamCoordinator`` behind the safety fence.
+"""KiteOS coordinators: the runtime's robot coordinators behind the safety fence.
 
-``KiteDualOpenYamCoordinator`` wraps the whole-body adapter in ``FencedWholeBodyAdapter`` (the only
-point every command source passes through) and closes the gaps the fence cannot close alone:
+``FencedCoordinatorMixin`` holds the fence logic; ``KiteDualOpenYamCoordinator`` (the runtime's
+``DualOpenYamCoordinator``, here) and ``KiteOpenArmCoordinator``
+(``kiteos.safety.openarm_coordinator``) add it to one robot each. The mixin wraps the whole-body adapter in
+``FencedWholeBodyAdapter`` (the only point every command source passes through) and closes the
+gaps the fence cannot close alone:
 
 * refuses real hardware without a fence file (``require_fence_on_hardware``), with a fence that
   leaves an arm without an enabled zone (unless the file says ``allow_no_zones: true``), with
   ``mode: monitor`` or with implausible rate/sweep settings; refuses any real adapter at all when
-  started with ``expect_mock`` (the KiteOS CLI sets it for every run without ``--real``);
+  started with ``expect_mock`` (the KiteOS CLI sets it for every run without ``--real``); refuses
+  a fence file written for another robot;
 * rewrites ``applied_joint_position_command`` so recorded actions are what the fence applied; the
   hook is installed on the output port before the runtime creates its tick loop, so no sample escapes;
 * ``set_estop`` latches the fence and cancels the executing trajectory (the runtime's trajectory task
@@ -18,8 +22,11 @@ point every command source passes through) and closes the gaps the fence cannot 
   arrive on the tick thread under the coordinator's non re-entrant hardware lock, where calling
   RPCs would deadlock, so the event handler only records and signals.
 
-Runs inside a runtime forkserver worker: the class is pickled by reference and this module is
-imported there, so it has no import-time side effects beyond defining classes.
+Runs inside a runtime forkserver worker: the classes are pickled by reference and this module is
+imported there, so it has no import-time side effects beyond defining classes. A policy's
+reference to the coordinator is also unpickled in the runtime's isolated LeRobot environment,
+which has no WebXR server (fastapi): this module and the robot coordinator modules must never
+import the teleop blueprints (tests/test_openarm.py checks it).
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from dimos.control.components import HardwareComponent
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -43,12 +50,14 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
     DualOpenYamCoordinatorConfig,
 )
 from dimos.utils.logging_config import setup_logger
 
+from kiteos.robots import DUAL_OPENYAM, MOCK_ADAPTER, RobotProfile
 from kiteos.safety.adapter import FencedWholeBodyAdapter, FenceEvent
 from kiteos.safety.fence import (
     FenceChecker,
@@ -56,12 +65,12 @@ from kiteos.safety.fence import (
     FenceReport,
     real_hardware_problems,
 )
-from kiteos.safety.kinematics import ARM_JOINTS, ARM_SIDES, GRIPPER_JOINTS
+from kiteos.safety.kinematics import ARM_SIDES
 
 logger = setup_logger()
 
 # The only adapter KiteOS treats as not-real hardware; anything else is assumed to move motors.
-MOCK_ADAPTER_TYPE = "mock_whole_body"
+MOCK_ADAPTER_TYPE = MOCK_ADAPTER
 # Enforced events after which an executing trajectory is cancelled.
 _CANCEL_ON_KINDS = frozenset({"hold", "error"})
 _SUPERVISOR_POLL_S = 0.25
@@ -79,8 +88,8 @@ def resolve_fence_path(path: str | Path) -> Path:
     return (p if p.is_absolute() else Path.cwd() / p).resolve()
 
 
-class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig):
-    """``DualOpenYamCoordinatorConfig`` plus the KiteOS fence settings.
+class KiteFenceSettings(BaseConfig):
+    """The KiteOS fence settings every KiteOS coordinator config adds.
 
     ``fence_path`` is the fence YAML (``--controlcoordinator.fence-path``); ``None`` runs mock arms
     with an empty fence (joint limits and the rate limit still apply) and is refused on real
@@ -94,10 +103,11 @@ class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig):
     expect_mock: bool = False
 
 
-class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
-    """Dual OpenYAM coordinator that enforces the KiteOS safety fence on every motor write."""
+class FencedCoordinatorMixin:
+    """The KiteOS fence for a runtime coordinator of ``ROBOT`` (put it first in the bases)."""
 
-    config: KiteDualOpenYamCoordinatorConfig
+    ROBOT: ClassVar[RobotProfile] = DUAL_OPENYAM
+    config: Any  # the concrete class's config (a KiteFenceSettings)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -138,7 +148,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
             )
         config, source = self._load_fence(real=real)
         checker = FenceChecker(config)
-        inner = super()._create_whole_body_adapter(component)
+        inner = super()._create_whole_body_adapter(component)  # type: ignore[misc]
         fenced = FencedWholeBodyAdapter(
             inner,
             joint_names=list(component.joints),
@@ -171,11 +181,17 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
                     "KiteOS: real arms WITHOUT a fence file (require_fence_on_hardware=False); "
                     "only joint limits and the rate limit are enforced"
                 )
-            return FenceConfig(), None
+            return FenceConfig(robot=self.ROBOT.key), None
         resolved = resolve_fence_path(str(raw))
         if not resolved.is_file():
             raise FileNotFoundError(f"KiteOS fence file not found: {resolved}")
         config = FenceConfig.load(resolved)
+        if config.robot != self.ROBOT.key:
+            raise RuntimeError(
+                f"KiteOS fence {resolved} is for the {config.profile.title} (robot: {config.robot}); "
+                f"this stack drives the {self.ROBOT.title}. A fence protects only the robot it was "
+                "written for."
+            )
         if real:
             check_fence_for_real_hardware(config, str(resolved))
         return config, str(resolved)
@@ -196,7 +212,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
         try:
             if not was_running:
                 self._install_applied_rewrite()
-            super().start()
+            super().start()  # type: ignore[misc]
             if not was_running:
                 self._wrap_applied_publisher()
         except Exception:
@@ -206,7 +222,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
     @rpc
     def stop(self) -> None:
         self._stop_fence_supervisor()
-        super().stop()
+        super().stop()  # type: ignore[misc]
 
     def _rewrite_applied(self, msg: JointState) -> JointState | None:
         out: JointState | None = msg
@@ -277,7 +293,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
                     self._trajectory_cancels += 1
             except Exception as exc:
                 logger.error(f"KiteOS E-STOP: cancelling the trajectory failed: {exc!r}")
-        return super().set_estop(estopped)
+        return super().set_estop(estopped)  # type: ignore[misc]
 
     @rpc
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
@@ -285,7 +301,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
         rejection = self._trajectory_gate(trajectory)
         if rejection is not None:
             return rejection
-        return super().execute_trajectory(trajectory)
+        return super().execute_trajectory(trajectory)  # type: ignore[misc]
 
     @rpc
     def task_invoke(
@@ -312,7 +328,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
                     if rejection is not None:
                         logger.warning(f"KiteOS rejected task_invoke on_joint_command: {rejection.message}")
                         return False
-        return super().task_invoke(task_name, method, kwargs)
+        return super().task_invoke(task_name, method, kwargs)  # type: ignore[misc]
 
     def _trajectory_gate(self, trajectory: Any) -> TrajectoryExecutionResult | None:
         """Rejection (E-STOP latched, or the trajectory would cross the fence) or None."""
@@ -362,6 +378,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
         tick_loop = self._tick_loop
         return {
             "product": "KiteOS",
+            "robot": self.ROBOT.key,
             "running": bool(tick_loop is not None and tick_loop.is_running),
             "fence_path": self._fence_source,
             "require_fence_on_hardware": bool(self.config.require_fence_on_hardware),
@@ -567,15 +584,16 @@ def describe_rejection(report: FenceReport) -> str:
 
 def _current_targets(fenced: FencedWholeBodyAdapter) -> dict[str, float]:
     status = fenced.status()
+    robot = fenced.robot
     named: dict[str, float] = {}
     for side in ARM_SIDES:
         arm = status["arms"][side]
         q = arm.get("last_written")
         if q is not None:
-            named.update({name: float(v) for name, v in zip(ARM_JOINTS[side], q, strict=True)})
+            named.update({name: float(v) for name, v in zip(robot.arm_joints[side], q, strict=True)})
         opening = arm.get("gripper_opening")
         if opening is not None:
-            named[GRIPPER_JOINTS[side]] = float(opening)
+            named[robot.gripper_joints[side]] = float(opening)
     return named
 
 
@@ -636,4 +654,19 @@ def _single_point_trajectory(msg: Any) -> JointTrajectory | None:
     if not names or len(names) != len(positions):
         return None
     return JointTrajectory(joint_names=names, points=[TrajectoryPoint(positions=positions)])
+
+
+
+# --------------------------------------------------------------------------- robots
+
+
+class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig, KiteFenceSettings):
+    """``DualOpenYamCoordinatorConfig`` plus the KiteOS fence settings (``KiteFenceSettings``)."""
+
+
+class KiteDualOpenYamCoordinator(FencedCoordinatorMixin, DualOpenYamCoordinator):
+    """Dual OpenYAM coordinator that enforces the KiteOS safety fence on every motor write."""
+
+    ROBOT = DUAL_OPENYAM
+    config: KiteDualOpenYamCoordinatorConfig
 

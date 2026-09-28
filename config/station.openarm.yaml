@@ -1,0 +1,51 @@
+# Copyright 2026 Kite ML.
+# KiteOS station for an OpenArm (Enactic OpenArm v2.0, bimanual): https://github.com/enactic/openarm
+#
+# Runs as shipped for MOCK runs on any machine (mock arms, synthetic cameras):
+#   kiteos --station config/station.openarm.yaml teleop
+#   kiteos --station config/station.openarm.yaml collect start
+# For a real OpenArm: copy this file (or add config/station.openarm.local.yaml with the site
+# values), fill in every REPLACE value and the real cameras, teach the fence
+# (`kiteos fence teach`), then `kiteos doctor`. --real refuses mock cameras and placeholder CAN.
+#
+# Per-platform values are {darwin: ..., linux: ...} or one scalar used on both.
+# Relative paths resolve against this file's directory (then its parent).
+
+station: openarm-demo              # one word; typed by the operator to confirm --real runs
+robot: openarm                     # dual-openyam (default) | openarm
+task: "pick up the cube"           # language instruction recorded with every episode
+session_prefix: openarm-demo       # optional; defaults to a slug of `task`
+
+can:
+  # One CAN bus per arm (the OpenArm runs CAN FD). macOS: the gs_usb adapter's USB serial
+  # (`kiteos can status` lists them). Linux: the SocketCAN interface (udev names can_left /
+  # can_right, then `kiteos can setup` after every plug or reboot).
+  left:  {darwin: REPLACE_LEFT_USB_SERIAL, linux: can_left}
+  right: {darwin: REPLACE_RIGHT_USB_SERIAL, linux: can_right}
+
+cameras:
+  # "mock" is a synthetic test pattern (no camera needed; never with --real). Real cameras:
+  # macOS: AVFoundation index. Linux: /dev/v4l/by-id/... or /dev/v4l/by-path/...-video-index0.
+  left_wrist:  mock
+  right_wrist: mock
+  top:         mock
+
+fence: config/fence.openarm.yaml
+recordings_dir: ~/teleop_stack/kiteos-runtime/recordings
+datasets_dir: ~/teleop_stack/kiteos-runtime/datasets
+
+hub:
+  repo_id: your-org/openarm-demo
+  private: true
+
+policy:
+  checkpoint: ~/teleop_stack/policies/REPLACE-openarm-checkpoint
+  device: auto                     # auto | cuda | mps | cpu
+
+runtime_root: ~/teleop_stack/kiteos-runtime
+viser_host: 127.0.0.1
+
+quest:
+  port: 8080
+  upstream: https://127.0.0.1:8443
+  adb: auto

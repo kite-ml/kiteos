@@ -44,16 +44,18 @@ from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState, W
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
+from kiteos.robots import DUAL_OPENYAM, RobotProfile
 from kiteos.safety.fence import ArmReport, FenceChecker, FenceConfig, FenceReport
 from kiteos.safety.geometry import normalize_opening
-from kiteos.safety.kinematics import ARM_JOINTS, ARM_SIDES, DOF_PER_ARM, GRIPPER_JOINTS
+from kiteos.safety.kinematics import ARM_SIDES
 
 logger = setup_logger()
 
 # Dual OpenYAM arm gains (dimos.robot.manipulators.dual_openyam.config _ARM_KP/_ARM_KD). A hold
-# never uses less stiffness than these, so a caller sending zero gains cannot make a held arm limp.
-ARM_HOLD_KP: tuple[float, ...] = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
-ARM_HOLD_KD: tuple[float, ...] = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+# never uses less stiffness than the robot's gains (``RobotProfile.hold_kp``/``hold_kd``), so a
+# caller sending zero gains cannot make a held arm limp.
+ARM_HOLD_KP: tuple[float, ...] = DUAL_OPENYAM.hold_kp
+ARM_HOLD_KD: tuple[float, ...] = DUAL_OPENYAM.hold_kd
 
 # Bounds on the tick period used by the rate limiter: a stalled tick must not unlock a big jump.
 RATE_DT_MIN_S = 0.001
@@ -195,15 +197,15 @@ class FencedWholeBodyAdapter:
 
     Args:
         inner: The adapter to protect (``MockWholeBodyAdapter``, the Damiao adapter, ...).
-        joint_names: The component's joint order (``HardwareComponent.joints``); must contain the
-            12 arm joints. Joints the fence does not know pass through untouched.
+        joint_names: The component's joint order (``HardwareComponent.joints``); must contain every
+            arm joint of the fence's robot. Joints the fence does not know pass through untouched.
         checker: The fence to enforce; swap it at runtime with ``reload``.
         on_event: Called with each ``FenceEvent``. Runs on the tick thread under the coordinator's
             hardware lock: keep it quick and never call coordinator RPCs from it.
         clock: Monotonic time source (seconds), injectable for tests.
         allow_monitor: False refuses ``mode: monitor`` (the coordinator passes False on real
             hardware).
-        hold_kp / hold_kd: Minimum per-arm-joint gains used while holding.
+        hold_kp / hold_kd: Minimum per-arm-joint gains used while holding (default: the robot's).
     """
 
     def __init__(
@@ -215,18 +217,25 @@ class FencedWholeBodyAdapter:
         on_event: Callable[[FenceEvent], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         allow_monitor: bool = True,
-        hold_kp: Sequence[float] = ARM_HOLD_KP,
-        hold_kd: Sequence[float] = ARM_HOLD_KD,
+        hold_kp: Sequence[float] | None = None,
+        hold_kd: Sequence[float] | None = None,
     ) -> None:
+        robot = checker.robot
+        self._robot = robot
+        self._dof = robot.dof
+        self._arm_joints: dict[str, list[str]] = {side: list(robot.arm_joints[side]) for side in ARM_SIDES}
+        self._gripper_joints: dict[str, str] = dict(robot.gripper_joints)
+        hold_kp = robot.hold_kp if hold_kp is None else hold_kp
+        hold_kd = robot.hold_kd if hold_kd is None else hold_kd
         names = [str(n) for n in joint_names]
         if len(set(names)) != len(names):
             raise ValueError("joint_names contains duplicates")
         index = {name: i for i, name in enumerate(names)}
-        missing = [n for side in ARM_SIDES for n in ARM_JOINTS[side] if n not in index]
+        missing = [n for side in ARM_SIDES for n in self._arm_joints[side] if n not in index]
         if missing:
-            raise ValueError(f"joint_names is missing arm joints {missing}")
-        if len(hold_kp) != DOF_PER_ARM or len(hold_kd) != DOF_PER_ARM:
-            raise ValueError(f"hold_kp and hold_kd need {DOF_PER_ARM} values each")
+            raise ValueError(f"joint_names is missing arm joints {missing} ({robot.title})")
+        if len(hold_kp) != self._dof or len(hold_kd) != self._dof:
+            raise ValueError(f"hold_kp and hold_kd need {self._dof} values each")
         if not all(_finite(v) and float(v) >= 0.0 for v in (*hold_kp, *hold_kd)):
             raise ValueError("hold gains must be finite and >= 0")
         self._check_mode_allowed(checker.config, allow_monitor)
@@ -235,10 +244,10 @@ class FencedWholeBodyAdapter:
         self._joint_names = names
         self._index = index
         self._arm_idx: dict[str, list[int]] = {
-            side: [index[n] for n in ARM_JOINTS[side]] for side in ARM_SIDES
+            side: [index[n] for n in self._arm_joints[side]] for side in ARM_SIDES
         }
         self._grip_idx: dict[str, int | None] = {
-            side: index.get(GRIPPER_JOINTS[side]) for side in ARM_SIDES
+            side: index.get(self._gripper_joints[side]) for side in ARM_SIDES
         }
         self._on_event = on_event
         self._clock = clock
@@ -348,6 +357,11 @@ class FencedWholeBodyAdapter:
         return list(self._joint_names)
 
     @property
+    def robot(self) -> RobotProfile:
+        """The robot whose arms this adapter fences."""
+        return self._robot
+
+    @property
     def checker(self) -> FenceChecker:
         with self._lock:
             return self._checker
@@ -411,6 +425,10 @@ class FencedWholeBodyAdapter:
 
     def reload(self, config: FenceConfig) -> None:
         """Atomically swap in a new fence. Raises (and keeps the old fence) if it is invalid."""
+        if config.robot != self._robot.key:
+            raise ValueError(
+                f"the fence is for the {config.profile.title}, this adapter drives the {self._robot.title}"
+            )
         self._check_mode_allowed(config, self._allow_monitor)
         checker = FenceChecker(config)
         with self._lock:
@@ -777,7 +795,7 @@ class FencedWholeBodyAdapter:
                 self._event(
                     side,
                     "limit_clamp",
-                    detail=f"{ARM_JOINTS[side][worst]} target {requested[worst]:.4f} rad "
+                    detail=f"{self._arm_joints[side][worst]} target {requested[worst]:.4f} rad "
                     f"clamped to {candidate[worst]:.4f}",
                     enforced=enforce,
                     record=False,
@@ -886,7 +904,7 @@ class FencedWholeBodyAdapter:
                 kd=self._gain(getattr(cmds[k], "kd", None), self._hold_kd[k]),
                 tau=0.0,
             )
-            for k in range(DOF_PER_ARM)
+            for k in range(self._dof)
         ]
         return _ArmPlan(held, last.copy(), True, report)
 
@@ -950,8 +968,8 @@ class FencedWholeBodyAdapter:
         column: Mapping[str, int],
         waypoints: Sequence[Sequence[float]],
     ) -> ArmReport:
-        arm_cols = [column.get(name) for name in ARM_JOINTS[side]]
-        grip_col = column.get(GRIPPER_JOINTS[side])
+        arm_cols = [column.get(name) for name in self._arm_joints[side]]
+        grip_col = column.get(self._gripper_joints[side])
         if all(c is None for c in arm_cols) and grip_col is None:
             return ArmReport(
                 side=side,

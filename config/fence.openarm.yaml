@@ -1,0 +1,49 @@
+# Copyright 2026 Kite ML.
+# KiteOS fence for the OpenArm (Enactic OpenArm v2.0). Reference: docs/FENCE.md
+#
+# The example plane stands in for a glass window in front of the robot. Before any real run,
+# replace it with a taught one (`kiteos fence teach`), cover the wrist cameras (extra_spheres),
+# and run `kiteos fence test --dataset <recorded dataset>` so a misplaced zone that blocks normal
+# task motion is caught offline.
+#
+# World frame openarm_body_link0 ("world"): +x forward, +y toward the left arm, +z up, z = 0 at
+# the bottom of the body. The arm bases (shoulders) sit at z = 0.698 m, 3.1 cm either side of
+# the centre; at joint zero the arms hang down along the body.
+
+version: 1
+robot: openarm
+station: openarm-demo
+mode: enforce
+margin_m: 0.05
+# gripper_stroke_m defaults to the OpenArm pinch gripper's measured stroke.
+
+mounts:
+  left:  {xyz: [0.0, 0.031, 0.698], rpy: [0.0, 0.0, 0.0]}
+  right: {xyz: [0.0, -0.031, 0.698], rpy: [0.0, 0.0, 0.0]}
+
+# Wrist cameras stick out of the hand; cover them once measured (links: ee_base_link, link6).
+extra_spheres: []
+#  - {name: wrist_camera, side: both, link: ee_base_link, center: [0.05, 0.0, -0.03], radius: 0.035}
+
+zones:
+  # Everything at x > 0.60 m (the glass and beyond) is forbidden for both arms.
+  - kind: half_space
+    name: glass_window
+    frame: world
+    applies_to: both
+    enabled: true
+    point: [0.60, 0.0, 0.0]
+    normal: [1.0, 0.0, 0.0]
+  # A table top 0.35 m above the bottom of the body: keep the arms above it.
+  - kind: half_space
+    name: table
+    frame: world
+    enabled: false
+    point: [0.0, 0.0, 0.35]
+    normal: [0.0, 0.0, -1.0]
+
+max_joint_speed_rad_s: 2.5
+joint_limit_margin_rad: 0.01
+interpolation_step_rad: 0.01
+refuse_start_inside: true
+max_feedforward_tau_nm: 0.0

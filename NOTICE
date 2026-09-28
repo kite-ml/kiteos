@@ -17,7 +17,8 @@ its original Apache-2.0 copyright header and carries the additional line
 
 These include:
   - src/kiteos/blueprints/: adapted from the dimOS dual OpenYAM teleop and
-    learning-collection blueprints.
+    learning-collection blueprints, and (openarm.py) the dimOS OpenArm WebXR
+    teleop blueprint.
   - src/kiteos/rollout/runtime.py: extends the dimOS LeRobot policy runtime.
   - src/kiteos/data/dual_openyam.urdf: copy of the dimOS asset
     data/dual_openyam_abc_box_v2/dual_openyam.urdf (see below).
@@ -56,5 +57,13 @@ Third-party material distributed with KiteOS:
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+  - src/kiteos/data/openarm_v20.urdf: the OpenArm v2.0 bimanual model,
+    expanded from enactic/openarm_description
+    (https://github.com/enactic/openarm_description, commit
+    1fba2cbc05001f05b4514120b70130b4ac06f409, openarm_v20.urdf.xacro),
+    Copyright 2026 Enactic, Inc., licensed under the Apache License, Version
+    2.0. src/kiteos/data/openarm_v20_spheres.json holds covering spheres that
+    tools/fit_link_spheres.py fitted to that repository's meshes.
 
 All other files are Copyright 2026 Kite ML.

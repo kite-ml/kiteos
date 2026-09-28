@@ -8,19 +8,22 @@ points, subclasses and command-line flags.
 
 KiteOS carries everything the base runtime supports: every embodiment and setup it ships (arms,
 quadrupeds, humanoids, drones, sensor rigs and simulators; see [Embodiments](#embodiments)) runs
-through `kiteos list` and `kiteos run`. On top of that, KiteOS builds the Kite station: the dual
-OpenYAM with its safety fence, three cameras and Quest teleop.
+through `kiteos list` and `kiteos run`. On top of that, KiteOS runs its own full workflow (safety
+fence, three cameras, Quest teleop, collection, upload and policy rollout) on two robots: the dual
+OpenYAM of the Kite station and the [OpenArm](#openarm) (Enactic OpenArm v2.0). The station file's
+`robot:` says which one a station runs.
 
 What KiteOS provides:
 
-- **KiteOS setups.** Four setups (`kiteos.dual-openyam-teleop`, `-collection`, `-rollout` and
-  `-rollout-recorded`)
-  and a `kiteos` CLI that fills every flag from one station file (`config/station.yaml`): CAN
-  selectors and camera devices per OS, task, dataset repo, policy.
+- **KiteOS setups.** Teleop, collection, rollout and recorded rollout for each robot
+  (`kiteos.dual-openyam-*`, `kiteos.openarm-*`), and a `kiteos` CLI that fills every flag from one
+  station file (`config/station.yaml`): robot, CAN selectors and camera devices per OS, task,
+  dataset repo, policy.
 - **Safety fence.** A keep-out fence (for example the customer's glass window) enforced in the
   control coordinator right before the motors, so it covers Quest teleop, policy trajectories, the
   grippers and every other command source. It includes joint limits, a speed limit, E-stop
-  latching and a teach workflow. See [docs/FENCE.md](docs/FENCE.md).
+  latching and a teach workflow, for both robots (a covering-sphere model per robot). See
+  [docs/FENCE.md](docs/FENCE.md).
 - **One stack per host, mock runs isolated.** Start commands refuse while another robot stack runs.
   Mock runs get a private bus and their own ports, and their coordinator refuses real arms.
 - **Branded Quest teleop.** A KiteOS page served to a USB-tethered Meta Quest through a local proxy
@@ -47,6 +50,9 @@ git clone <kiteos repo> ~/teleop_stack/kiteos   # or copy the directory
 # 3. Check the station, then try it with mock arms (no hardware)
 kiteos doctor
 kiteos teleop            # add --real only after the RUNBOOK checklist
+
+# The OpenArm, with mock arms and synthetic cameras (no hardware at all)
+kiteos --station config/station.openarm.yaml teleop
 ```
 
 `install.sh` installs system packages (Homebrew or apt), uv, and Rust (only for the recorder).
@@ -121,10 +127,52 @@ What KiteOS adds to every setup:
   list grows as setups are reviewed.
 - **Host isolation.** KiteOS runs one setup per run and refuses to start while another robot stack
   runs on the host. Each run writes a run-state file, which `kiteos status` and `kiteos stop` read.
-- **The fence.** The keep-out fence covers the dual OpenYAM. Its real arms run only through
-  `kiteos teleop`, `collect` and `rollout`, which enforce the fence; `kiteos run` refuses them. Other
-  robots run with their own limits only. Extending the fence to other arms is next: single OpenYAM
-  (same arm geometry), then xArm7 and Piper.
+- **The fence.** The keep-out fence covers the dual OpenYAM and the OpenArm. Their real arms run
+  only through `kiteos teleop`, `collect` and `rollout`, which enforce the fence; `kiteos run`
+  refuses them. Other robots run with their own limits only. Next candidates for the fence: the
+  single OpenYAM (same arm geometry as the dual OpenYAM), then xArm7 and Piper.
+
+## OpenArm
+
+[OpenArm](https://github.com/enactic/openarm) (Enactic OpenArm v2.0) is a bimanual robot: a body
+with two 7-joint arms and pinch grippers, one CAN FD bus per arm. KiteOS runs its whole workflow on
+it, the same way as on the dual OpenYAM:
+
+| Step | Command (station with `robot: openarm`) | Setup |
+|---|---|---|
+| Teleop (Quest, viser viewer) | `kiteos teleop` | `kiteos.openarm-teleop` |
+| Collect (3 cameras + recorder) | `kiteos collect start` + `kiteos collect controls` | `kiteos.openarm-collection` |
+| Convert / upload | `kiteos upload` (`--no-push`: local LeRobot datasets only) | |
+| Roll out a policy | `kiteos rollout start [--record]` + `kiteos rollout controls` | `kiteos.openarm-rollout[-recorded]` |
+| Fence | `kiteos fence show\|validate\|check\|teach\|test` | |
+
+`config/station.openarm.yaml` runs as shipped with mock arms and synthetic `mock` cameras (a test
+pattern), so the whole workflow works on a machine without hardware:
+
+```bash
+kiteos --station config/station.openarm.yaml teleop            # viser URL printed at start
+kiteos --station config/station.openarm.yaml collect start     # records mock-openarm-demo-NNN
+kiteos --station config/station.openarm.yaml upload --session mock-openarm-demo --no-push
+kiteos --station config/station.openarm.yaml rollout start --checkpoint <pretrained_model> --record
+```
+
+Without a Quest, `tools/openarm_workflow.py` plays the operator from a second shell (run it with
+the Python `kiteos` is installed in, `kiteos-runtime/.venv/bin/python`): `ready`, `through` (a
+trajectory through the glass, which the fence rejects), `stream` (teleop-like commands toward the
+glass, held at the margin) and `home` on a teleop stack, `collect 6` on a collection stack and
+`rollout 12` on a rollout stack. It refuses anything but a mock KiteOS OpenArm run. Training is
+LeRobot's, on the converted dataset; KiteOS rolls out the checkpoint it writes.
+
+- **Model.** The runtime pins `enactic/openarm_description` and fetches it into its asset cache on
+  first use. KiteOS vendors the expanded URDF (`src/kiteos/data/openarm_v20.urdf`) and a
+  covering-sphere model fitted to the OpenArm meshes (`openarm_v20_spheres.json`, generated by
+  `tools/fit_link_spheres.py`) for the fence. The fence frame is `openarm_body_link0` (`world`):
+  +x forward, +y left, z = 0 at the bottom of the body; the shoulders sit 0.698 m up.
+- **Data.** Recordings hold 16 joints (`openarm_left_joint1..7`, `openarm_right_joint1..7`, then
+  the two grippers, opening 0 to 1) and the three cameras; the dataset `robot_type` is `openarm`.
+- **Real arms.** Fill in the CAN adapters and the real cameras (`--real` refuses `mock`), teach
+  the fence (`config/fence.openarm.yaml` holds an example glass plane) and follow the
+  [runbook](docs/RUNBOOK.md). The OpenArm gains, limits and gravity compensation are the runtime's.
 
 `kiteos-runtime` is the base runtime's own command line under the KiteOS name. KiteOS uses it to
 start every stack. Run directly, it applies none of the gates above; it is for advanced use.
@@ -155,17 +203,22 @@ src/kiteos/
   __init__.py  brand.py    version and brand constants (import-light)
   config.py                StationConfig (config/station.yaml)
   embodiments.py           runtime setups by robot, and the checked hardware-free runs
+  robots.py                the robots KiteOS fences (dual OpenYAM, OpenArm): joints, links, spheres
   runtime_cli.py           the `kiteos-runtime` command (the base runtime's CLI)
   safety/                  kinematics, covering spheres, zones, fence checker, teach helpers,
                            FencedWholeBodyAdapter + KiteDualOpenYamCoordinator (control-loop side)
-  blueprints/              dual_openyam_teleop / _collection / _rollout (+ _rollout_recorded),
-                           KiteArmTeleopModule (WebXR server on 127.0.0.1)
+  blueprints/              dual OpenYAM and OpenArm (openarm.py) teleop / collection / rollout
+                           (+ recorded), KiteArmTeleopModule (WebXR server on 127.0.0.1),
+                           KiteCameraModule (webcams, or the synthetic `mock` camera)
   rollout/                 DualArmPolicyModule + runtime (runs in the policy environment)
   quest/                   branded Quest proxy, static assets, vendored ES modules
   cli/                     the `kiteos` Typer app (setups.py: list/run/status; runs.py: stack
                            detection, run-state files, private bus)
-  data/dual_openyam.urdf   vendored robot model used by the fence
-config/                    station.yaml, fence.yaml and their *.example.yaml templates
+  data/                    vendored robot models and sphere tables used by the fence
+config/                    station.yaml, fence.yaml and their *.example.yaml templates;
+                           station.openarm.yaml + fence.openarm.yaml (OpenArm, mock as shipped)
+tools/                     fit_link_spheres.py (covering spheres from a robot's meshes);
+                           openarm_workflow.py (drives a mock OpenArm stack without a Quest)
 deploy/
   install.sh  lib/         installer and its helpers
   udev/                    80-kiteos-can.rules (can_left/can_right), 70-kiteos-quest.rules (uaccess)

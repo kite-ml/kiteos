@@ -1,4 +1,4 @@
-# KiteOS runbook: dual OpenYAM station
+# KiteOS runbook: dual OpenYAM and OpenArm stations
 
 The morning checklist for macOS and Linux. Commands assume the default layout that `deploy/install.sh` creates under `~/teleop_stack` (KiteOS,
 the base runtime checkout `kiteos-runtime/` and `policies/`) and a configured `config/station.yaml`.
@@ -223,10 +223,41 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
 | `kiteos run <setup>` refuses without `--real` | KiteOS has not checked that this setup, in this mode, moves no real robot | Use a mode `kiteos list` shows for it (mock, `--sim`, `--replay`), or `--real` for the robot itself |
 | `kiteos run` refuses a robot address or `.env` setting | Mock, sim and replay runs take no robot address | Remove it from the base runtime checkout's `.env`; pass addresses only to `--real` runs |
 
+## OpenArm station
+
+Everything above applies to an OpenArm (Enactic OpenArm v2.0) station too: the commands start the
+setup for the station's `robot:` (`kiteos.openarm-*` when it says `openarm`). The differences:
+
+- **Station file.** Start from `config/station.openarm.yaml` (`robot: openarm`). As shipped it runs
+  mock arms with synthetic `mock` cameras, so `kiteos --station config/station.openarm.yaml teleop`
+  works on any machine. For the real robot, fill in both CAN adapters and the three real cameras:
+  `--real` refuses `mock` cameras and placeholder CAN values.
+- **CAN.** One CAN FD bus per arm; the same `kiteos can setup` / `can status` flow as the dual
+  OpenYAM.
+- **Model.** The first OpenArm run fetches `enactic/openarm_description` (about 200 MB) into the
+  runtime's asset cache; it needs network access once.
+- **Fence.** `config/fence.openarm.yaml` (`robot: openarm`) holds an example glass plane at
+  x = 0.60 m in `openarm_body_link0`; teach the real one with `kiteos fence teach`. A station
+  refuses a fence written for another robot. The arms hang along the body at joint zero, the
+  reference pose `kiteos fence validate` checks.
+- **Data.** 16 joints (7 + 7 arm joints, two grippers) and the dataset `robot_type` `openarm`.
+  Mock sessions are `mock-<prefix>-NNN`; `kiteos upload --session mock-<prefix> --no-push`
+  converts them to local LeRobot datasets without pushing anything.
+- **Rehearsal without a Quest.** `tools/openarm_workflow.py` drives a mock OpenArm stack from a
+  second shell: fenced trajectories, streamed commands the fence holds, scripted demonstrations
+  and a timed policy rollout (see its header). It refuses real runs.
+- **Gripper openings.** The fence grows the finger spheres with the opening (`fence check` counts
+  an opening it is not given as fully open), using a conservative 8.1 cm stroke. At the example
+  ready pose the closed hand clears the example glass by 9 cm, but opening the fingers past about
+  half brings them inside the 5 cm margin (fully open: 0.9 cm), so the fence holds that opening.
+  Keep the fingers closed near the glass, or measure the real stroke and set `gripper_stroke_m` in
+  the fence file.
+
 ## Other robots and setups
 
-The station runs the dual OpenYAM, but KiteOS carries every setup of the base runtime: other arms,
-quadrupeds, humanoids, drones, sensor rigs and simulators (see the README's Embodiments section).
+The stations run the dual OpenYAM or the OpenArm, but KiteOS carries every setup of the base
+runtime: other arms, quadrupeds, humanoids, drones, sensor rigs and simulators (see the README's
+Embodiments section).
 
 - `kiteos list` shows them by robot and how each runs without hardware. Filter with
   `kiteos list -e xarm`.
@@ -237,5 +268,5 @@ quadrupeds, humanoids, drones, sensor rigs and simulators (see the README's Embo
 - `kiteos run <setup> --real` drives another robot **without the KiteOS fence**: only that robot's
   own limits apply. You must type the station name to confirm, and someone must be at its e-stop.
   Never run one next to the customer's glass.
-- The dual OpenYAM's real arms run only through `kiteos teleop`, `collect` and `rollout`, which
-  enforce the fence. `kiteos run` refuses them.
+- The dual OpenYAM's and the OpenArm's real arms run only through `kiteos teleop`, `collect` and
+  `rollout`, which enforce the fence. `kiteos run` refuses them.

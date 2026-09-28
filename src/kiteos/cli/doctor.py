@@ -33,14 +33,20 @@ from kiteos.cli._common import (
     run_capture,
     status_line,
 )
-from kiteos.config import CAMERA_ROLES, SIDES, StationConfig, StationError, is_placeholder, platform_key, repo_root
-
-EXPECTED_BLUEPRINTS = (
-    "kiteos.dual-openyam-teleop",
-    "kiteos.dual-openyam-collection",
-    "kiteos.dual-openyam-rollout",
-    "kiteos.dual-openyam-rollout-recorded",
+from kiteos.config import (
+    CAMERA_ROLES,
+    SIDES,
+    StationConfig,
+    StationError,
+    is_mock_camera,
+    is_placeholder,
+    platform_key,
+    repo_root,
 )
+from kiteos.robots import DUAL_OPENYAM, OPENARM, ROBOTS, RobotProfile
+
+# Every KiteOS setup of every robot (kiteos.<robot>-<kind>).
+EXPECTED_BLUEPRINTS = tuple(f"kiteos.{name}" for robot in ROBOTS.values() for name in robot.setups.values())
 # system_profiler names of cameras that are never station cameras (built-in, iPhone Continuity).
 NON_STATION_CAMERA = re.compile(r"(?i)facetime|macbook|built-?in|iphone|ipad|continuity|desk view")
 RECORDER_BINARY = Path("dimos/experimental/memory/rust/result/bin/dimos-memory-recorder")
@@ -52,6 +58,16 @@ FK_VECTORS: tuple[tuple[tuple[float, ...], tuple[float, float, float]], ...] = (
     ((0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (0.2574, 0.31, 0.1735)),
     ((0.0, 1.047, 1.047, 0.0, 0.0, 0.0), (0.3894, 0.31, 0.4021)),
     ((0.5, 1.2, 0.8, -0.3, 0.4, 1.0), (0.3486, 0.4195, 0.1635)),
+)
+# OpenArm: grasp frame positions in openarm_body_link0 (pinocchio on the vendored URDF, default
+# mounts); (side, q, expected).
+OPENARM_FK_VECTORS: tuple[tuple[str, tuple[float, ...], tuple[float, float, float]], ...] = (
+    ("left", (0.0,) * 7, (-0.0014, 0.1535, 0.124)),
+    ("left", (0.3, -0.5, 0.2, 1.0, 0.1, 0.3, -0.2), (0.1737, 0.2533, 0.252)),
+    ("left", (-1.0, -1.2, 0.5, 1.8, -0.4, 0.5, 0.8), (0.2475, 0.276, 0.9061)),
+    ("right", (0.0,) * 7, (-0.0014, -0.1535, 0.124)),
+    ("right", (-0.3, 0.5, -0.2, 1.0, -0.1, -0.3, 0.2), (0.1737, -0.2533, 0.252)),
+    ("right", (1.0, 1.2, -0.5, 1.8, 0.4, -0.5, -0.8), (0.2475, -0.276, 0.9061)),
 )
 FK_TOLERANCE_M = 1e-3
 
@@ -199,6 +215,16 @@ def check_fence(station: StationConfig) -> list[Check]:
         config = FenceConfig.load(path)
     except (FenceConfigError, OSError) as exc:
         return [Check("FAIL", "fence", f"invalid: {path}", str(exc))]
+    if config.robot != station.robot:
+        return [
+            Check(
+                "FAIL",
+                "fence",
+                f"{path.name} is for the {config.profile.title}, the station runs the {station.profile.title}",
+                f"point `fence:` at a fence with `robot: {station.robot}` (examples: config/fence.example.yaml for "
+                "the dual OpenYAM, config/fence.openarm.yaml for the OpenArm)",
+            )
+        ]
     return [
         Check(f.level, f"fence {f.name}", f.detail, f.fix)  # type: ignore[arg-type]
         for f in validate_fence(config, station_name=station.station)
@@ -206,6 +232,8 @@ def check_fence(station: StationConfig) -> list[Check]:
 
 
 def check_urdf(station: StationConfig, probe: Probe) -> list[Check]:
+    if station.robot != DUAL_OPENYAM.key:
+        return check_vendored_urdf(station.profile, probe)
     vendored = VENDORED_URDF
     if not probe.exists(vendored):
         return [Check("FAIL", "URDF", f"missing {vendored}", "reinstall KiteOS (the URDF ships with the package)")]
@@ -225,7 +253,23 @@ def check_urdf(station: StationConfig, probe: Probe) -> list[Check]:
     return [Check("PASS", "URDF", f"{vendored.name} (runtime model not downloaded yet)")]
 
 
-def check_fk() -> list[Check]:
+def check_vendored_urdf(robot: RobotProfile, probe: Probe) -> list[Check]:
+    """A vendored URDF other than the dual OpenYAM's: present and parseable into both arm chains."""
+    from kiteos.safety.kinematics import DualArmKinematics, UrdfError, default_urdf_path
+
+    vendored = Path(default_urdf_path(robot))
+    if not probe.exists(vendored):
+        return [Check("FAIL", "URDF", f"missing {vendored}", "reinstall KiteOS (the URDF ships with the package)")]
+    try:
+        DualArmKinematics(robot=robot)
+    except (UrdfError, OSError, ValueError, KeyError) as exc:
+        return [Check("FAIL", "URDF", f"{vendored.name}: {exc}", "reinstall KiteOS; the fence cannot be trusted")]
+    return [Check("PASS", "URDF", f"{vendored.name} ({robot.title}, vendored for the fence)")]
+
+
+def check_fk(robot: RobotProfile | None = None) -> list[Check]:
+    if robot is not None and robot.key == OPENARM.key:
+        return check_fk_openarm()
     import numpy as np
 
     from kiteos.safety.kinematics import DualArmKinematics
@@ -254,6 +298,33 @@ def check_fk() -> list[Check]:
             )
         ]
     return [Check("PASS", "FK self-test", f"{len(FK_VECTORS)} poses per arm within {worst * 1000:.2f} mm")]
+
+
+def check_fk_openarm() -> list[Check]:
+    import numpy as np
+
+    from kiteos.safety.kinematics import DualArmKinematics
+
+    try:
+        kinematics = DualArmKinematics(robot=OPENARM)
+        worst = 0.0
+        for side, q, expected in OPENARM_FK_VECTORS:
+            grasp = kinematics.link_poses(side, np.array(q))["grasp_frame"][:3, 3]
+            worst = max(worst, float(np.max(np.abs(grasp - np.array(expected)))))
+    except Exception as exc:
+        return [
+            Check("FAIL", "FK self-test", f"{type(exc).__name__}: {exc}", "the fence cannot be trusted; reinstall KiteOS")
+        ]
+    if worst > FK_TOLERANCE_M:
+        return [
+            Check(
+                "FAIL",
+                "FK self-test",
+                f"OpenArm grasp frame off by {worst * 1000:.2f} mm",
+                "the kinematic model does not match the reference; do not run with --real",
+            )
+        ]
+    return [Check("PASS", "FK self-test", f"OpenArm, {len(OPENARM_FK_VECTORS)} poses within {worst * 1000:.2f} mm")]
 
 
 def read_pin(path: Path) -> str | None:
@@ -455,6 +526,21 @@ def check_can(station: StationConfig, probe: Probe) -> list[Check]:
 
 
 def check_cameras(station: StationConfig, probe: Probe) -> list[Check]:
+    mocked = station.mock_cameras()
+    if not mocked:
+        return check_real_cameras(station, probe)
+    info = Check(
+        "INFO",
+        "cameras",
+        f"{', '.join(mocked)}: synthetic test pattern (mock)",
+        "mock cameras are for runs without camera hardware; --real refuses them",
+    )
+    if len(mocked) == len(CAMERA_ROLES):
+        return [info]
+    return [info, *check_real_cameras(station, probe)]
+
+
+def check_real_cameras(station: StationConfig, probe: Probe) -> list[Check]:
     if probe.platform == "darwin":
         result = probe.run(["system_profiler", "SPCameraDataType", "-json"], timeout=30.0)
         try:
@@ -485,7 +571,7 @@ def check_cameras(station: StationConfig, probe: Probe) -> list[Check]:
     nodes = probe.glob("/dev/video*")
     for role in CAMERA_ROLES:
         selector = station.camera(role)
-        if isinstance(selector, str) and not is_placeholder(selector):
+        if isinstance(selector, str) and not is_placeholder(selector) and not is_mock_camera(selector):
             if probe.exists(Path(selector)):
                 checks.append(Check("PASS", f"camera {role}", selector))
             else:
@@ -539,11 +625,13 @@ def run_doctor(
     checks += check_python(probe)
     if station is None:
         return checks
-    checks.append(Check("PASS", "station", f"{station.station} · {station.task} · {station.source}"))
+    checks.append(
+        Check("PASS", "station", f"{station.station} · {station.profile.title} · {station.task} · {station.source}")
+    )
     checks += check_station_values(station, probe)
     checks += check_fence(station)
     checks += check_urdf(station, probe)
-    checks += check_fk()
+    checks += check_fk(station.profile)
     checks += check_runtime(station, probe)
     checks += check_can(station, probe)
     checks += check_cameras(station, probe)

@@ -41,7 +41,8 @@ from rich.table import Table
 
 from kiteos.cli import runs
 from kiteos.cli._common import confirm_typed, console, die, kiteos_env, note, runtime_argv, warn
-from kiteos.config import CAMERA_ROLES, SIDES, StationConfig, is_placeholder, platform_key
+from kiteos.config import CAMERA_ROLES, SIDES, StationConfig, is_mock_camera, is_placeholder, platform_key
+from kiteos.robots import DUAL_OPENYAM, ROBOTS, RobotProfile, get_robot
 
 if TYPE_CHECKING:
     from kiteos.safety.fence import FenceConfig
@@ -52,6 +53,7 @@ POLICY_INSTANCE = "policy"
 RECORDER_INSTANCE = "recorder"
 EPISODES_INSTANCE = "episodes"
 VISER_FLAG = "--manipulationmodule.visualization.host"
+VIEWER_FENCE_FLAG = "--manipulationmodule.fence-path"  # the fence zones drawn in the viewer
 VISER_PORT_FLAG = "--manipulationmodule.visualization.port"
 WEBXR_PORT_FLAG = "--armteleopmodule.server-port"
 VIEWER_FLAG = "--viewer"
@@ -84,14 +86,32 @@ class BlueprintSpec:
         return f"{self.package}.{self.name}" if self.package else self.name
 
 
-BLUEPRINTS: dict[str, BlueprintSpec] = {
-    "teleop": BlueprintSpec("dual-openyam-teleop", False, "Quest teleop of both arms"),
-    "collection": BlueprintSpec("dual-openyam-collection", True, "teleop + 3 cameras + episode recorder"),
-    "rollout": BlueprintSpec("dual-openyam-rollout", True, "policy rollout with Quest takeover"),
-    "rollout_recorded": BlueprintSpec(
-        "dual-openyam-rollout-recorded", True, "policy rollout with Quest takeover, recorded"
-    ),
+# Setup kind -> (has cameras, description); the setup name comes from the station's robot.
+SETUP_KINDS: dict[str, tuple[bool, str]] = {
+    "teleop": (False, "Quest teleop of both arms"),
+    "collection": (True, "teleop + 3 cameras + episode recorder"),
+    "rollout": (True, "policy rollout with Quest takeover"),
+    "rollout_recorded": (True, "policy rollout with Quest takeover, recorded"),
 }
+
+
+def setup_spec(robot: str | RobotProfile, kind: str) -> BlueprintSpec:
+    """The KiteOS setup of ``kind`` for ``robot`` (``kiteos.<robot>-<kind>``)."""
+    profile = get_robot(robot)
+    try:
+        has_cameras, description = SETUP_KINDS[kind]
+    except KeyError:
+        raise ValueError(f"unknown setup kind {kind!r}; one of {', '.join(SETUP_KINDS)}") from None
+    return BlueprintSpec(profile.setup_name(kind), has_cameras, description)
+
+
+def all_setup_specs() -> list[tuple[RobotProfile, str, BlueprintSpec]]:
+    """(robot, kind, setup) for every KiteOS setup of every robot."""
+    return [(robot, kind, setup_spec(robot, kind)) for robot in ROBOTS.values() for kind in SETUP_KINDS]
+
+
+# The dual OpenYAM setups by kind (the default robot).
+BLUEPRINTS: dict[str, BlueprintSpec] = {kind: setup_spec(DUAL_OPENYAM, kind) for kind in SETUP_KINDS}
 
 
 class LaunchError(ValueError):
@@ -145,7 +165,7 @@ def build_runtime_command(
     camera selector for this host is still a template placeholder, or when a private bus is
     requested for a real run.
     """
-    spec = BLUEPRINTS[blueprint] if isinstance(blueprint, str) else blueprint
+    spec = setup_spec(station.profile, blueprint) if isinstance(blueprint, str) else blueprint
     notes: list[str] = []
     argv = runtime_argv("run", spec.run_name)
     if runtime_config is not None:
@@ -156,7 +176,8 @@ def build_runtime_command(
     if real and private_bus:
         raise LaunchError("a real run uses the station's bus, never a private one")
     if fence_path is not None:
-        argv += [f"--{COORDINATOR_FLAG}.fence-path", str(Path(fence_path).expanduser().resolve())]
+        resolved_fence = str(Path(fence_path).expanduser().resolve())
+        argv += [f"--{COORDINATOR_FLAG}.fence-path", resolved_fence, VIEWER_FENCE_FLAG, resolved_fence]
     # CLI flags beat the environment and config files: pin the safety-relevant coordinator config.
     argv += [
         f"--{COORDINATOR_FLAG}.require-fence-on-hardware",
@@ -185,7 +206,15 @@ def build_runtime_command(
                     f"camera {role} is not configured for {platform_key()} "
                     f"(station file: cameras.{role}.{platform_key()}); find it with `kiteos cameras list`"
                 )
+            if real and is_mock_camera(selector):
+                raise LaunchError(
+                    f"camera {role} is the synthetic 'mock' camera: a real run needs the station's "
+                    f"real cameras (station file: cameras.{role}.{platform_key()})"
+                )
             argv += [camera_flag(role), str(selector)]
+        mocked = [role for role in CAMERA_ROLES if is_mock_camera(station.camera(role))]
+        if mocked:
+            notes.append(f"cameras {', '.join(mocked)} are synthetic test patterns (mock)")
 
     if station.viser_host != DEFAULT_VISER_HOST:
         argv += [VISER_FLAG, station.viser_host]
@@ -298,6 +327,13 @@ def load_fence_for_launch(station: StationConfig, *, real: bool) -> tuple[Path |
         fence = FenceConfig.load(path)
     except (FenceConfigError, OSError) as exc:
         die(f"fence file is invalid, not starting:\n{exc}", code=2)
+    if fence.robot != station.robot:
+        die(
+            f"fence file {path} is for the {fence.profile.title} (robot: {fence.robot}), but this station "
+            f"runs the {station.profile.title} (robot: {station.robot}). A fence protects only the robot it "
+            "was written for; point `fence:` in the station file at this robot's fence.",
+            code=2,
+        )
     if real:
         problems = real_hardware_problems(fence)
         if problems:
@@ -432,7 +468,7 @@ def show_real_warning(fence: FenceConfig, fence_path: Path, station: StationConf
     sources = f"\nStation: {station.describe_sources()}\nFence: {fence_path}" if station is not None else ""
     console.print(
         Panel.fit(
-            "[fail]REAL ARMS[/fail]: both arms' motors will be powered.\n"
+            f"[fail]REAL ARMS[/fail]: both {fence.profile.title} arms' motors will be powered.\n"
             "Stopping KiteOS disables the motors: the arms may DROP." + sources,
             border_style="fail",
         )
@@ -459,8 +495,9 @@ def show_real_warning(fence: FenceConfig, fence_path: Path, station: StationConf
                     title="WARNING",
                 )
             )
+    wrist_links = fence.profile.wrist_links
     wrist = [
-        side for side in SIDES if not any(s.side in ("both", side) and s.link in ("gripper", "link5") for s in fence.extra_spheres)
+        side for side in SIDES if not any(s.side in ("both", side) and s.link in wrist_links for s in fence.extra_spheres)
     ]
     if wrist:
         warn(
@@ -547,7 +584,9 @@ def launch(
     for message in plan.notes:
         console.print(f"[warn]note:[/warn] {message}")
     mode = "[fail]REAL ARMS[/fail]" if real else "[ok]MOCK arms[/ok]"
-    console.print(f"[kite]{plan.blueprint.run_name}[/kite] on {station.station} · {mode}")
+    console.print(
+        f"[kite]{plan.blueprint.run_name}[/kite] ({station.profile.title}) on {station.station} · {mode}"
+    )
     if plan.webxr_port is not None:
         console.print(
             f"MOCK run on its own ports: WebXR https://127.0.0.1:{plan.webxr_port}/teleop · viser "

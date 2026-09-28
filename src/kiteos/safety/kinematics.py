@@ -1,17 +1,23 @@
 # Copyright 2026 Kite ML.
-"""Pure-numpy forward kinematics for the dual OpenYAM arms.
+"""Pure-numpy forward kinematics for the dual-arm robots KiteOS fences.
 
-The per-arm chain is parsed from the vendored URDF ``kiteos/data/dual_openyam.urdf`` (a copy of
-the runtime ``data/dual_openyam_abc_box_v2/dual_openyam.urdf``). Every joint contributes
+Each arm chain is parsed from the robot's vendored URDF (``kiteos/data``; see
+``kiteos.robots``): ``dual_openyam.urdf`` (a copy of the runtime
+``data/dual_openyam_abc_box_v2/dual_openyam.urdf``) or ``openarm_v20.urdf`` (the expanded
+OpenArm v2.0 xacro). Every joint contributes
 
     T_child = T_parent @ Trans(xyz) @ Rz(yaw) @ Ry(pitch) @ Rx(roll) @ AxisAngle(axis, q)
 
 which is the URDF convention and matches pinocchio to machine precision.
 
-World frame ``dual_openyam_base``: +x forward (the gripper approach direction at home), +y toward
-the left arm, +z up, z = 0 at the base mounting surface. Each arm base is placed in the world by a
-mount transform. The URDF mounts the bases at (0, +0.31, 0) and (0, -0.31, 0); that spacing comes
-from a simulation scene, so callers can pass measured mounts instead.
+World frames: ``dual_openyam_base`` (+x forward, the gripper approach direction at home, +y
+toward the left arm, +z up, z = 0 at the base mounting surface) and ``openarm_body_link0`` (the
+OpenArm body: +x forward, +y left, +z up, z = 0 at the bottom of the body). Each arm base is placed
+in the world by a mount transform; the URDF mounts are the default, and callers can pass measured
+mounts instead.
+
+The module-level names (``ARM_JOINTS``, ``DOF_PER_ARM``, ...) describe the dual OpenYAM, the
+default robot; pass ``robot=`` for another one.
 
 This module must not import the runtime or pinocchio: it runs inside the control tick.
 """
@@ -29,41 +35,27 @@ from typing import Literal
 
 import numpy as np
 
+from kiteos.robots import DUAL_OPENYAM, OPENYAM_FINGERTIP_Z_M, RobotProfile, get_robot
+
 Side = Literal["left", "right"]
 ARM_SIDES: tuple[Side, Side] = ("left", "right")
-DOF_PER_ARM = 6
-ARM_JOINTS: dict[str, list[str]] = {
-    side: [f"{side}_joint{i}" for i in range(1, DOF_PER_ARM + 1)] for side in ARM_SIDES
-}
+# The dual OpenYAM (the default robot); other robots: ``kiteos.robots``.
+DOF_PER_ARM = DUAL_OPENYAM.dof
+ARM_JOINTS: dict[str, list[str]] = {side: list(DUAL_OPENYAM.arm_joints[side]) for side in ARM_SIDES}
 ARM_JOINT_NAMES: list[str] = [*ARM_JOINTS["left"], *ARM_JOINTS["right"]]
-GRIPPER_JOINTS: dict[str, str] = {"left": "left_arm/gripper", "right": "right_arm/gripper"}
+GRIPPER_JOINTS: dict[str, str] = dict(DUAL_OPENYAM.gripper_joints)
 # Must stay identical to dimos.robot.manipulators.dual_openyam.joints.DUAL_OPENYAM_JOINTS
 # (asserted by tests); redefined here so the safety core never imports the runtime.
-DUAL_OPENYAM_JOINTS: list[str] = [*ARM_JOINT_NAMES, GRIPPER_JOINTS["left"], GRIPPER_JOINTS["right"]]
+DUAL_OPENYAM_JOINTS: list[str] = DUAL_OPENYAM.joint_names
 
-WORLD_FRAME = "dual_openyam_base"
+WORLD_FRAME = DUAL_OPENYAM.world_frame
 # Link names without the side prefix. The chain parser requires all of them.
-LINK_NAMES: tuple[str, ...] = (
-    "base",
-    "link1",
-    "link2",
-    "link3",
-    "link4",
-    "link5",
-    "gripper",
-    "tip_left",
-    "tip_right",
-    "grasp_frame",
-)
-# The finger meshes end 0.1468 m along the gripper -z axis (fingers closed), 4.68 cm beyond the
-# grasp frame. The URDF finger frames sit at the finger roots, so this comes from the meshes.
-FINGERTIP_Z_M = -0.1468
-
-_URDF_RESOURCE = ("data", "dual_openyam.urdf")
+LINK_NAMES: tuple[str, ...] = DUAL_OPENYAM.required_links
+FINGERTIP_Z_M = OPENYAM_FINGERTIP_Z_M
 
 
 class UrdfError(ValueError):
-    """The URDF does not describe the dual OpenYAM chain KiteOS expects."""
+    """The URDF does not describe the arm chain KiteOS expects for the robot."""
 
 
 @dataclass(frozen=True)
@@ -148,20 +140,20 @@ def _skew(axis: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------------------------
 
 
-def default_urdf_path() -> str:
-    """Filesystem path of the vendored URDF (the package is always installed as a directory)."""
-    return str(resources.files("kiteos").joinpath(*_URDF_RESOURCE))
+def default_urdf_path(robot: str | RobotProfile | None = None) -> str:
+    """Filesystem path of a robot's vendored URDF (the package is always installed as a directory)."""
+    return str(resources.files("kiteos").joinpath("data", get_robot(robot).urdf_resource))
 
 
-@functools.lru_cache(maxsize=1)
-def _default_urdf_text() -> str:
-    return resources.files("kiteos").joinpath(*_URDF_RESOURCE).read_text(encoding="utf-8")
+@functools.lru_cache(maxsize=None)
+def _vendored_urdf_text(resource: str) -> str:
+    return resources.files("kiteos").joinpath("data", resource).read_text(encoding="utf-8")
 
 
-def read_urdf_text(urdf_path: str | Path | None = None) -> str:
-    """URDF XML text: the vendored copy by default, or the file at ``urdf_path``."""
+def read_urdf_text(urdf_path: str | Path | None = None, robot: str | RobotProfile | None = None) -> str:
+    """URDF XML text: the robot's vendored copy by default, or the file at ``urdf_path``."""
     if urdf_path is None:
-        return _default_urdf_text()
+        return _vendored_urdf_text(get_robot(robot).urdf_resource)
     return Path(urdf_path).expanduser().read_text(encoding="utf-8")
 
 
@@ -231,17 +223,22 @@ class _Step:
 
 
 class ArmChain:
-    """Kinematic chain of one OpenYAM arm, parsed from the URDF.
+    """Kinematic chain of one arm, parsed from the URDF.
 
     Link names are reported without the side prefix (``"link3"``, not ``"left_link3"``).
     """
 
-    def __init__(self, side: str, joints: Mapping[str, UrdfJoint]) -> None:
+    def __init__(
+        self, side: str, joints: Mapping[str, UrdfJoint], robot: str | RobotProfile | None = None
+    ) -> None:
         if side not in ARM_SIDES:
             raise ValueError(f"side must be one of {ARM_SIDES}, got {side!r}")
+        self.robot = get_robot(robot)
         self.side = side
-        prefix = f"{side}_"
-        root = f"{side}_base"
+        self.dof = self.robot.dof
+        prefix = self.robot.link_prefix[side]
+        root = self.robot.chain_root[side]
+        expected = list(self.robot.arm_joints[side])
 
         children: dict[str, list[UrdfJoint]] = {}
         mount_joint: UrdfJoint | None = None
@@ -266,8 +263,8 @@ class ArmChain:
 
         movable = [j for j in order if j.type != "fixed"]
         names = [j.name for j in movable]
-        if names != ARM_JOINTS[side]:
-            raise UrdfError(f"{side} arm movable joints are {names}, expected {ARM_JOINTS[side]}")
+        if names != expected:
+            raise UrdfError(f"{side} arm movable joints are {names}, expected {expected}")
         for joint in movable:
             if joint.type != "revolute" or joint.lower is None or joint.upper is None:
                 raise UrdfError(f"{joint.name} must be a revolute joint with position limits")
@@ -279,8 +276,8 @@ class ArmChain:
                 raise UrdfError(f"link {link!r} below {root!r} lacks the {prefix!r} prefix")
             return link[len(prefix) :]
 
-        self.link_names: tuple[str, ...] = ("base", *(short(j.child) for j in order))
-        missing = [n for n in LINK_NAMES if n not in self.link_names]
+        self.link_names: tuple[str, ...] = (short(root), *(short(j.child) for j in order))
+        missing = [n for n in self.robot.required_links if n not in self.link_names]
         if missing:
             raise UrdfError(f"{side} arm is missing links {missing}")
         self.link_index: dict[str, int] = {n: i for i, n in enumerate(self.link_names)}
@@ -317,23 +314,35 @@ class ArmChain:
             pose_matrix(mount_joint.xyz, mount_joint.rpy) if mount_joint is not None else np.eye(4)
         )
 
-        by_child = {short(j.child): j for j in order}
-        tips = [by_child[n] for n in ("tip_left", "tip_right")]
-        if any(short(t.parent) != "gripper" for t in tips):
-            raise UrdfError(f"{side} finger frames must be children of the gripper")
-        mid = (np.asarray(tips[0].xyz) + np.asarray(tips[1].xyz)) / 2.0
-        self.fingertip_local: np.ndarray = np.array([mid[0], mid[1], FINGERTIP_Z_M, 1.0])
+        tip = self.robot.fingertip
+        self.fingertip_link: str = tip.link
+        if tip.link not in self.link_index:
+            raise UrdfError(f"{side} arm has no fingertip link {tip.link!r}")
+        if tip.between is not None:
+            by_child = {short(j.child): j for j in order}
+            tips = [by_child[n] for n in tip.between]
+            if any(short(t.parent) != tip.link for t in tips):
+                raise UrdfError(f"{side} finger frames must be children of the {tip.link}")
+            mid = (np.asarray(tips[0].xyz) + np.asarray(tips[1].xyz)) / 2.0
+            self.fingertip_local: np.ndarray = np.array([mid[0], mid[1], float(tip.z or 0.0), 1.0])
+        else:
+            from kiteos.robots import fingertip_points
+
+            points = fingertip_points(self.robot)
+            if not points or side not in points:
+                raise UrdfError(f"{self.robot.key} has no fingertip point for the {side} arm")
+            self.fingertip_local = np.array([*points[side], 1.0], dtype=float)
 
     def link_poses_batch(self, q: np.ndarray, base_T: np.ndarray) -> np.ndarray:
         """World poses of every link for a batch of configurations.
 
-        ``q`` is (M, 6) or (6,); returns (M, L, 4, 4) indexed by ``self.link_index``.
+        ``q`` is (M, dof) or (dof,); returns (M, L, 4, 4) indexed by ``self.link_index``.
         """
         Q = np.asarray(q, dtype=float)
         if Q.ndim == 1:
             Q = Q[None, :]
-        if Q.ndim != 2 or Q.shape[1] != DOF_PER_ARM:
-            raise ValueError(f"expected q of shape (M, {DOF_PER_ARM}), got {Q.shape}")
+        if Q.ndim != 2 or Q.shape[1] != self.dof:
+            raise ValueError(f"expected q of shape (M, {self.dof}), got {Q.shape}")
         m = Q.shape[0]
         out = np.empty((m, len(self.link_names), 4, 4))
         out[:, 0] = base_T
@@ -350,33 +359,34 @@ class ArmChain:
             out[:, step.child] = T
         return out
 
-    def link_poses(self, q6: np.ndarray, base_T: np.ndarray) -> dict[str, np.ndarray]:
+    def link_poses(self, q: np.ndarray, base_T: np.ndarray) -> dict[str, np.ndarray]:
         """World pose (4x4) of every link for one configuration, keyed by unprefixed link name."""
-        poses = self.link_poses_batch(np.asarray(q6, dtype=float).reshape(1, DOF_PER_ARM), base_T)[
-            0
-        ]
+        poses = self.link_poses_batch(np.asarray(q, dtype=float).reshape(1, self.dof), base_T)[0]
         return {name: poses[i] for i, name in enumerate(self.link_names)}
 
     def fingertip_batch(self, q: np.ndarray, base_T: np.ndarray) -> np.ndarray:
         """Fingertip positions (M, 3) for a batch of configurations."""
-        grip = self.link_poses_batch(q, base_T)[:, self.link_index["gripper"]]
-        return (grip @ self.fingertip_local)[:, :3]
+        link = self.link_poses_batch(q, base_T)[:, self.link_index[self.fingertip_link]]
+        return (link @ self.fingertip_local)[:, :3]
 
 
 class DualArmKinematics:
-    """Forward kinematics of both arms in the ``dual_openyam_base`` world frame.
+    """Forward kinematics of both arms of a robot, in its world frame.
 
     ``mounts`` maps side -> arm base pose in the world (4x4, or an xyz 3-vector). Sides left out
-    use the URDF mount, (0, +/-0.31, 0) with identity rotation.
+    use the URDF mount (dual OpenYAM: (0, +/-0.31, 0); OpenArm: (0, +/-0.031, 0.698)).
     """
 
     def __init__(
         self,
         mounts: Mapping[str, np.ndarray] | None = None,
         urdf_path: str | None = None,
+        robot: str | RobotProfile | None = None,
     ) -> None:
-        joints = parse_urdf_joints(read_urdf_text(urdf_path))
-        self.chains: dict[str, ArmChain] = {side: ArmChain(side, joints) for side in ARM_SIDES}
+        self.robot = get_robot(robot)
+        self.dof = self.robot.dof
+        joints = parse_urdf_joints(read_urdf_text(urdf_path, self.robot))
+        self.chains: dict[str, ArmChain] = {side: ArmChain(side, joints, self.robot) for side in ARM_SIDES}
         mounts = dict(mounts or {})
         unknown = set(mounts) - set(ARM_SIDES)
         if unknown:
@@ -398,17 +408,16 @@ class DualArmKinematics:
     def joint_limits(self) -> dict[str, np.ndarray]:
         return {side: chain.joint_limits.copy() for side, chain in self.chains.items()}
 
-    def link_poses(self, side: str, q6: np.ndarray | Sequence[float]) -> dict[str, np.ndarray]:
+    def link_poses(self, side: str, q: np.ndarray | Sequence[float]) -> dict[str, np.ndarray]:
         """World pose of every link of one arm, keyed by unprefixed link name."""
-        return self.chain(side).link_poses(np.asarray(q6, dtype=float), self.mounts[side])
+        return self.chain(side).link_poses(np.asarray(q, dtype=float), self.mounts[side])
 
     def link_poses_batch(self, side: str, q: np.ndarray) -> np.ndarray:
         """(M, L, 4, 4) world link poses; index links with ``self.chain(side).link_index``."""
         return self.chain(side).link_poses_batch(q, self.mounts[side])
 
-    def fingertip(self, side: str, q6: np.ndarray | Sequence[float]) -> np.ndarray:
-        """World position (3,) of the finger end: gripper-frame (0, 0, -0.1468), between pads."""
+    def fingertip(self, side: str, q: np.ndarray | Sequence[float]) -> np.ndarray:
+        """World position (3,) of the finger end (dual OpenYAM: gripper-frame (0, 0, -0.1468),
+        between the pads; OpenArm: the closed fingers' distal end, see ``kiteos.robots``)."""
         chain = self.chain(side)
-        return chain.fingertip_batch(
-            np.asarray(q6, dtype=float).reshape(1, DOF_PER_ARM), self.mounts[side]
-        )[0]
+        return chain.fingertip_batch(np.asarray(q, dtype=float).reshape(1, self.dof), self.mounts[side])[0]

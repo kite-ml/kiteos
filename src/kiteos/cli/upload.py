@@ -8,7 +8,9 @@
 2. Episodes marked after a session was converted are removed from its dataset with
    ``_isolated/drop_episodes.py`` (or the session is re-converted when the history is unknown).
 3. All converted sessions are merged into ``<datasets>/_hub`` and pushed to the station's Hub
-   repository, private unless the station (or ``--public``) says otherwise.
+   repository, private unless the station (or ``--public``) says otherwise. ``--no-push`` stops
+   after step 2: the sessions stay local LeRobot datasets (for local training or a devbox), and
+   mock-arm sessions may be converted that way because nothing leaves the machine.
 
 The helper scripts run in the runtime's isolated LeRobot environment.
 """
@@ -204,17 +206,20 @@ def run_upload(
     prefix: str | None = None,
     dry_run: bool = False,
     include_mock: bool = False,
+    push: bool = True,
 ) -> int:
     """Convert, merge and push. Returns a process exit code.
 
     The Hub push replaces the dataset in ``repo`` with the merged sessions of ONE prefix, so a
     prefix other than the station's needs an explicit ``repo_id`` (otherwise it would replace the
     station dataset with only those sessions). Mock-arm sessions (``mock-*``) are refused unless
-    ``include_mock``.
+    ``include_mock``. With ``push=False`` the sessions are only converted to local datasets.
     """
     repo = repo_id or station.hub.repo_id
     is_private = station.hub.private if private is None else private
     prefix = prefix or station.prefix
+    if not push:
+        return convert_only(station, prefix, dry_run=dry_run)
     if prefix.startswith(MOCK_PREFIX) and not include_mock:
         console.print(
             f"[fail]{prefix}[/fail] sessions were recorded with MOCK arms (simulated joint states "
@@ -270,6 +275,31 @@ def run_upload(
     return result.returncode
 
 
+def convert_only(station: StationConfig, prefix: str, *, dry_run: bool = False) -> int:
+    """Convert ``<prefix>-NNN`` sessions to local LeRobot datasets; nothing is pushed."""
+    recordings_dir, datasets_dir = station.recordings_path(), station.datasets_path()
+    recordings = find_recordings(recordings_dir, prefix)
+    if not recordings:
+        console.print(f"No recordings found under {recordings_dir}/{prefix}-NNN.")
+        return 1
+    console.print(f"{len(recordings)} session(s) of [kite]{prefix}[/kite] -> {datasets_dir} (local only, not pushed)")
+    if dry_run:
+        for recording in recordings:
+            state = "ready" if dataset_ready(datasets_dir / recording.name) else "convert"
+            console.print(f"  {state:<11}{recording.name}")
+        note("dry run: nothing converted")
+        return 0
+    env = IsolatedEnv()
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+    ready = [datasets_dir / r.name for r in recordings if prepare_session(env, r, datasets_dir)]
+    for dataset in ready:
+        console.print(f"  [ok]dataset[/ok] {dataset}")
+    if not ready:
+        console.print("Nothing converted.")
+        return 1
+    return 0
+
+
 def upload(
     repo_id: Annotated[
         Optional[str], typer.Option("--repo-id", help="Hub dataset repo (default: station hub.repo_id).")
@@ -285,12 +315,22 @@ def upload(
     include_mock: Annotated[
         bool, typer.Option("--include-mock", help="Allow uploading mock-arm (mock-*) sessions.")
     ] = False,
+    no_push: Annotated[
+        bool,
+        typer.Option("--no-push", help="Only convert to local LeRobot datasets (mock-* sessions too); push nothing."),
+    ] = False,
     station: StationOption = None,
 ) -> None:
     """Convert finished recordings to LeRobot and push them as one dataset to the Hub."""
     config = load_station(station)
     raise typer.Exit(
         run_upload(
-            config, repo_id=repo_id, private=private, prefix=session, dry_run=dry_run, include_mock=include_mock
+            config,
+            repo_id=repo_id,
+            private=private,
+            prefix=session,
+            dry_run=dry_run,
+            include_mock=include_mock,
+            push=not no_push,
         )
     )

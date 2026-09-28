@@ -34,13 +34,13 @@ host. Unlike the runtime blueprint, viser and the WebXR server bind 127.0.0.1.
 from collections.abc import Mapping
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import collection_recorder
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
 
+from kiteos.blueprints.cameras import KiteCameraModule
 from kiteos.blueprints.teleop import build_kiteos_dual_openyam_webxr
 
 CameraDevice = int | str
@@ -57,10 +57,13 @@ EPISODES_INSTANCE_NAME = "episodes"
 
 
 def camera_blueprint(role: str, camera_index: CameraDevice | None = None) -> Blueprint:
-    """One 640x480@30 webcam named ``role`` whose image topic is ``<role>_image``."""
+    """One 640x480@30 camera named ``role`` whose image topic is ``<role>_image``.
+
+    A webcam, or the synthetic test pattern for the device ``mock`` (see kiteos.blueprints.cameras).
+    """
     if role not in CAMERA_ROLES:
         raise ValueError(f"unknown camera role {role!r}; expected one of {CAMERA_ROLES}")
-    return CameraModule.blueprint(
+    return KiteCameraModule.blueprint(
         instance_name=role,
         hardware=WebcamConfig(
             camera_index=DEFAULT_CAMERA_INDICES[role] if camera_index is None else camera_index,

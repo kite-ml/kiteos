@@ -31,14 +31,11 @@ from pydantic import (
     model_validator,
 )
 
+from kiteos.robots import DEFAULT_ROBOT, ROBOTS, WORLD_ALIAS, RobotKey, RobotProfile, get_robot
 from kiteos.yamlio import load_yaml_unique
 from kiteos.safety.geometry import DEFAULT_GRIPPER_STROKE_M, SphereModel, Spheres, normalize_opening
 from kiteos.safety.kinematics import (
-    ARM_JOINTS,
     ARM_SIDES,
-    DOF_PER_ARM,
-    GRIPPER_JOINTS,
-    LINK_NAMES,
     DualArmKinematics,
     Side,
     pose_matrix,
@@ -71,7 +68,7 @@ class FenceConfigError(ValueError):
 
 
 class Mount(BaseModel):
-    """Pose of one arm base in ``dual_openyam_base``."""
+    """Pose of one arm base in the robot's world frame (``dual_openyam_base``, ``openarm_body_link0``)."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -100,7 +97,7 @@ class ExtraSphere(BaseModel):
 
     name: str = Field(min_length=1)
     side: Literal["left", "right", "both"] = "both"
-    link: str
+    link: str  # unprefixed link name of the fence's robot (checked by FenceConfig)
     center: Vec3  # in the link frame, metres
     radius: float = Field(gt=0, le=MAX_EXTRA_SPHERE_RADIUS_M, allow_inf_nan=False)
 
@@ -117,23 +114,34 @@ class ExtraSphere(BaseModel):
     @field_validator("link")
     @classmethod
     def _known_link(cls, v: str) -> str:
-        if v not in LINK_NAMES:
-            raise ValueError(
-                f"unknown link {v!r}; use one of: {', '.join(LINK_NAMES)} (no side prefix)"
-            )
+        known = sorted({link for robot in ROBOTS.values() for link in robot.required_links})
+        if v not in known:
+            raise ValueError(f"unknown link {v!r}; use one of: {', '.join(known)} (no side prefix)")
         return v
 
 
+def default_mounts(robot: str | RobotProfile | None = None) -> dict[Side, Mount]:
+    """The URDF arm mounts of ``robot`` (dual OpenYAM: y = +/-0.31 m; OpenArm: see kiteos.robots)."""
+    profile = get_robot(robot)
+    return {side: Mount(xyz=xyz, rpy=rpy) for side, (xyz, rpy) in profile.default_mounts.items()}  # type: ignore[misc]
+
+
 def _default_mounts() -> dict[Side, Mount]:
-    return {"left": Mount(xyz=(0.0, 0.31, 0.0)), "right": Mount(xyz=(0.0, -0.31, 0.0))}
+    return default_mounts(DEFAULT_ROBOT)
 
 
 class FenceConfig(BaseModel):
-    """The fence file (``config/fence.yaml``)."""
+    """The fence file (``config/fence.yaml``).
+
+    ``robot`` names the robot the fence protects (``dual-openyam``, the default, or ``openarm``);
+    mounts, link names and zone frames are checked against it, and a coordinator refuses a
+    fence written for another robot.
+    """
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     version: Literal[1] = 1
+    robot: RobotKey = DEFAULT_ROBOT
     station: str = ""
     mode: Literal["enforce", "monitor"] = "enforce"  # monitor = log only; refused on real hardware
     margin_m: float = Field(0.05, ge=MIN_MARGIN_M, allow_inf_nan=False)
@@ -157,6 +165,28 @@ class FenceConfig(BaseModel):
     # are covered).
     allow_no_zones: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _robot_defaults(cls, data: Any) -> Any:
+        """Fill what depends on the robot: its URDF mounts, and ``world`` for zones without a frame
+        on robots other than the dual OpenYAM (whose zones default to ``dual_openyam_base``)."""
+        if not isinstance(data, Mapping):
+            return data
+        key = data.get("robot", DEFAULT_ROBOT)
+        if key not in ROBOTS:
+            return data  # the field validator reports the unknown robot
+        out = dict(data)
+        if "mounts" not in out:
+            out["mounts"] = default_mounts(key)
+        if "gripper_stroke_m" not in out and key != DEFAULT_ROBOT:
+            out["gripper_stroke_m"] = get_robot(key).gripper_stroke_m
+        zones = out.get("zones")
+        if key != DEFAULT_ROBOT and isinstance(zones, list):
+            out["zones"] = [
+                {**z, "frame": WORLD_ALIAS} if isinstance(z, Mapping) and "frame" not in z else z for z in zones
+            ]
+        return out
+
     @field_validator("mounts")
     @classmethod
     def _both_mounts(cls, v: dict[str, Mount]) -> dict[str, Mount]:
@@ -164,6 +194,29 @@ class FenceConfig(BaseModel):
         if missing:
             raise ValueError(f"mounts must define both 'left' and 'right' (missing {missing})")
         return v
+
+    @model_validator(mode="after")
+    def _fits_the_robot(self) -> FenceConfig:
+        profile = get_robot(self.robot)
+        frames = profile.zone_frames
+        for zone in self.zones:
+            if zone.frame not in frames:
+                raise ValueError(
+                    f"zone {zone.name!r}: frame {zone.frame!r} is not a frame of the {profile.title}; "
+                    f"use one of: {', '.join(frames)}"
+                )
+        for sphere in self.extra_spheres:
+            if sphere.link not in profile.required_links:
+                raise ValueError(
+                    f"extra sphere {sphere.name!r}: {sphere.link!r} is not a {profile.title} link; "
+                    f"use one of: {', '.join(profile.required_links)} (no side prefix)"
+                )
+        return self
+
+    @property
+    def profile(self) -> RobotProfile:
+        """The robot this fence protects."""
+        return get_robot(self.robot)
 
     @model_validator(mode="after")
     def _unique_names(self) -> FenceConfig:
@@ -229,8 +282,11 @@ class FenceConfig(BaseModel):
         )
 
     def frame_transforms(self) -> dict[str, np.ndarray]:
-        """World pose of each zone frame (``dual_openyam_base``, ``left_base``, ``right_base``)."""
-        return frame_transforms({side: self.mounts[side].matrix() for side in ARM_SIDES})
+        """World pose of each zone frame (``world`` and the robot's world frame, ``left_base``,
+        ``right_base``)."""
+        return frame_transforms(
+            {side: self.mounts[side].matrix() for side in ARM_SIDES}, self.profile.world_frame
+        )
 
 
 def real_hardware_problems(config: FenceConfig) -> list[str]:
@@ -358,14 +414,14 @@ def _fail(side: str, detail: str) -> ArmReport:
     )
 
 
-def _as_q6(q6: Any) -> np.ndarray | None:
+def _as_q(q: Any, dof: int) -> np.ndarray | None:
     try:
-        q = np.asarray(q6, dtype=float).reshape(-1)
+        arr = np.asarray(q, dtype=float).reshape(-1)
     except (TypeError, ValueError):
         return None
-    if q.shape != (DOF_PER_ARM,) or not np.all(np.isfinite(q)):
+    if arr.shape != (dof,) or not np.all(np.isfinite(arr)):
         return None
-    return q
+    return arr
 
 
 @dataclass(frozen=True, eq=False)
@@ -386,10 +442,12 @@ class FenceChecker:
 
     def __init__(self, config: FenceConfig, urdf_path: str | None = None) -> None:
         self.config = config
+        self.robot: RobotProfile = config.profile
+        self.dof = self.robot.dof
         mounts: dict[str, np.ndarray] = {side: config.mounts[side].matrix() for side in ARM_SIDES}
-        self.kinematics = DualArmKinematics(mounts=mounts, urdf_path=urdf_path)
+        self.kinematics = DualArmKinematics(mounts=mounts, urdf_path=urdf_path, robot=self.robot)
         self.joint_limits: dict[str, np.ndarray] = self.kinematics.joint_limits
-        self.frame_T = frame_transforms(mounts)
+        self.frame_T = frame_transforms(mounts, self.robot.world_frame)
         self._margin = float(config.margin_m)
         self._stroke = float(config.gripper_stroke_m)
         self._step = float(config.interpolation_step_rad)
@@ -404,7 +462,7 @@ class FenceChecker:
         self._arms: dict[str, _Arm] = {}
         for side in ARM_SIDES:
             chain = self.kinematics.chain(side)
-            model = SphereModel.for_arm(side, config.extra_spheres)
+            model = SphereModel.for_arm(side, config.extra_spheres, self.robot)
             zones = tuple(compile_zone(z, self.frame_T) for z in config.zones if z.applies(side))
             self._arms[side] = _Arm(
                 side=side,
@@ -430,7 +488,7 @@ class FenceChecker:
     ) -> Spheres:
         """World-frame covering spheres of one arm (for display and diagnostics)."""
         arm = self._arms[side]
-        q = np.asarray(q6, dtype=float).reshape(1, DOF_PER_ARM)
+        q = np.asarray(q6, dtype=float).reshape(1, self.dof)
         poses = self.kinematics.chain(side).link_poses_batch(q, arm.base_T)
         return Spheres(
             centers=arm.spheres.centers_from_poses(poses, arm.link_idx)[0],
@@ -452,8 +510,8 @@ class FenceChecker:
         if bounds is None:
             raise ValueError(f"side must be one of {ARM_SIDES}, got {side!r}")
         q = np.asarray(q6, dtype=float).reshape(-1)
-        if q.shape != (DOF_PER_ARM,):
-            raise ValueError(f"expected {DOF_PER_ARM} joint values, got {q.shape[0]}")
+        if q.shape != (self.dof,):
+            raise ValueError(f"expected {self.dof} joint values, got {q.shape[0]}")
         return np.clip(q, bounds[0], bounds[1])
 
     # ---------------------------------------------------------------- checks
@@ -466,9 +524,9 @@ class FenceChecker:
             arm = self._arms.get(side)
             if arm is None:
                 return _fail(str(side), f"unknown side {side!r}")
-            q = _as_q6(q6)
+            q = _as_q(q6, self.dof)
             if q is None:
-                return _fail(side, "joint positions must be 6 finite values")
+                return _fail(side, f"joint positions must be {self.dof} finite values")
             return self._evaluate(arm, q[None, :], gripper_opening)
         except Exception as exc:  # fail closed: the tick must never see an exception
             return _fail(str(side), f"fence error: {type(exc).__name__}: {exc}")
@@ -489,9 +547,9 @@ class FenceChecker:
             arm = self._arms.get(side)
             if arm is None:
                 return _fail(str(side), f"unknown side {side!r}")
-            qa, qb = _as_q6(q6_from), _as_q6(q6_to)
+            qa, qb = _as_q(q6_from, self.dof), _as_q(q6_to, self.dof)
             if qa is None or qb is None:
-                return _fail(side, "joint positions must be 6 finite values")
+                return _fail(side, f"joint positions must be {self.dof} finite values")
             samples = self.motion_samples(qa, qb)
             if samples is None:
                 return _fail(side, "motion too large to verify; command smaller steps")
@@ -500,7 +558,7 @@ class FenceChecker:
             return _fail(str(side), f"fence error: {type(exc).__name__}: {exc}")
 
     def motion_samples(self, q_from: np.ndarray, q_to: np.ndarray) -> np.ndarray | None:
-        """Samples (M, 6) from ``q_from`` to ``q_to`` inclusive; ``None`` if there are too many."""
+        """Samples (M, dof) from ``q_from`` to ``q_to`` inclusive; ``None`` if there are too many."""
         delta = q_to - q_from
         span = float(np.max(np.abs(delta)))
         # Aim a hair below the step so rounding in the interpolation can never exceed it.
@@ -516,13 +574,13 @@ class FenceChecker:
     def pair_clearances(
         self, side: str, samples: np.ndarray, gripper_opening: float | None = None
     ) -> np.ndarray:
-        """Clearance ``(M, Z*N)`` of every (zone, sphere) pair at each of ``M`` samples ``(M, 6)``.
+        """Clearance ``(M, Z*N)`` of every (zone, sphere) pair at each of ``M`` samples ``(M, dof)``.
 
         Pair ``z*N + n`` is zone ``z`` (order of ``zone_names``) and sphere ``n``. ``(M, 0)`` when
         no zone applies. Raises on bad input (callers fail closed).
         """
         arm = self._arms[side]
-        q = np.asarray(samples, dtype=float).reshape(-1, DOF_PER_ARM)
+        q = np.asarray(samples, dtype=float).reshape(-1, self.dof)
         if not arm.zones:
             return np.zeros((q.shape[0], 0))
         poses = self.kinematics.chain(side).link_poses_batch(q, arm.base_T)
@@ -550,7 +608,7 @@ class FenceChecker:
         enters the margin) and at least one pair within the margin gains clearance. Never raises.
         """
         try:
-            qa, qb = _as_q6(q6_from), _as_q6(q6_to)
+            qa, qb = _as_q(q6_from, self.dof), _as_q(q6_to, self.dof)
             if qa is None or qb is None or side not in self._arms:
                 return False
             samples = self.motion_samples(qa, qb)
@@ -584,9 +642,9 @@ class FenceChecker:
                 return _fail(side, "empty path")
             rows = []
             for q_from, q_to, opening in segments:
-                qa, qb = _as_q6(q_from), _as_q6(q_to)
+                qa, qb = _as_q(q_from, self.dof), _as_q(q_to, self.dof)
                 if qa is None or qb is None:
-                    return _fail(side, "joint positions must be 6 finite values")
+                    return _fail(side, f"joint positions must be {self.dof} finite values")
                 samples = self.motion_samples(qa, qb)
                 if samples is None:
                     return _fail(side, "motion too large to verify; command smaller steps")
@@ -642,7 +700,8 @@ class FenceChecker:
     ) -> FenceReport:
         """Check both arms.
 
-        Accepts a 14-vector (or the 12 arm joints) in ``DUAL_OPENYAM_JOINTS`` order, or a mapping
+        Accepts the robot's full joint vector (both arms then both grippers, e.g. 14 values in
+        ``DUAL_OPENYAM_JOINTS`` order, 16 for the OpenArm) or just the arm joints, or a mapping
         joint name -> value. Gripper openings come from ``gripper_openings`` (keyed by side or by
         gripper joint name), else from the input; unknown openings count as fully open.
         """
@@ -669,28 +728,29 @@ class FenceChecker:
     ) -> tuple[dict[str, np.ndarray | str], dict[str, float | None]]:
         q_by_side: dict[str, np.ndarray | str] = {}
         openings: dict[str, float | None] = {side: None for side in ARM_SIDES}
+        arm_joints, gripper_joints, dof = self.robot.arm_joints, self.robot.gripper_joints, self.dof
         if isinstance(values, Mapping):
             for side in ARM_SIDES:
-                missing = [name for name in ARM_JOINTS[side] if name not in values]
+                missing = [name for name in arm_joints[side] if name not in values]
                 if missing:
                     q_by_side[side] = f"missing joints {missing}"
                 else:
-                    q_by_side[side] = np.array([float(values[name]) for name in ARM_JOINTS[side]])
-                if GRIPPER_JOINTS[side] in values:
-                    openings[side] = float(values[GRIPPER_JOINTS[side]])
+                    q_by_side[side] = np.array([float(values[name]) for name in arm_joints[side]])
+                if gripper_joints[side] in values:
+                    openings[side] = float(values[gripper_joints[side]])
         else:
             arr = np.asarray(values, dtype=float).reshape(-1)
-            if arr.shape[0] not in (2 * DOF_PER_ARM, 2 * DOF_PER_ARM + 2):
-                reason = f"expected 12 or 14 joint values, got {arr.shape[0]}"
+            if arr.shape[0] not in (2 * dof, 2 * dof + 2):
+                reason = f"expected {2 * dof} or {2 * dof + 2} joint values, got {arr.shape[0]}"
                 return {side: reason for side in ARM_SIDES}, openings
-            q_by_side["left"] = arr[:DOF_PER_ARM]
-            q_by_side["right"] = arr[DOF_PER_ARM : 2 * DOF_PER_ARM]
-            if arr.shape[0] == 2 * DOF_PER_ARM + 2:
-                openings["left"] = float(arr[12])
-                openings["right"] = float(arr[13])
+            q_by_side["left"] = arr[:dof]
+            q_by_side["right"] = arr[dof : 2 * dof]
+            if arr.shape[0] == 2 * dof + 2:
+                openings["left"] = float(arr[2 * dof])
+                openings["right"] = float(arr[2 * dof + 1])
         if gripper_openings:
             for side in ARM_SIDES:
-                for key in (side, GRIPPER_JOINTS[side]):
+                for key in (side, gripper_joints[side]):
                     if key in gripper_openings:
                         openings[side] = float(gripper_openings[key])
         return q_by_side, openings

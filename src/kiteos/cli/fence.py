@@ -42,7 +42,14 @@ app = typer.Typer(help="Author and verify the safety fence (keep-out zones).", n
 
 COORDINATOR = "ControlCoordinator"
 JOINT_STATE_STREAM = "coordinator_joint_state"
-# Poses the arms normally start from; a zone that covers them stops the robot from starting.
+
+
+def reference_poses(config: FenceConfig) -> dict[str, list[float]]:
+    """Poses the arms normally start from (per robot); a zone that covers them stops the robot."""
+    return {name: list(q) for name, q in config.profile.reference_poses.items()}
+
+
+# The dual OpenYAM's (kept for callers of the old name).
 REFERENCE_POSES: dict[str, list[float]] = {
     "home": [0.0, 1.047, 1.047, 0.0, 0.0, 0.0],
     "zero": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -208,23 +215,25 @@ def validate_fence(config: FenceConfig, *, station_name: str | None = None) -> l
                 "--real refuses a fence from another station; check its zones, then fix `station:`",
             )
         )
+    wrist = config.profile.wrist_links
     cameraless = [
         side
         for side in ("left", "right")
-        if not any(x.side in ("both", side) and x.link in ("gripper", "link5") for x in config.extra_spheres)
+        if not any(x.side in ("both", side) and x.link in wrist for x in config.extra_spheres)
     ]
     if cameraless:
         findings.append(
             Finding(
                 "WARN",
                 "wrist cameras",
-                f"no extra sphere on the {' and '.join(cameraless)} gripper/link5: the wrist camera "
+                f"no extra sphere on the {' and '.join(cameraless)} {'/'.join(wrist)}: the wrist camera "
                 "and its cable are not fenced",
                 "measure the camera and add it under extra_spheres (docs/FENCE.md)",
             )
         )
     checker = FenceChecker(config)
-    for pose_name, q in REFERENCE_POSES.items():
+    poses = reference_poses(config)
+    for pose_name, q in poses.items():
         for side in ("left", "right"):
             closed = checker.check_arm(side, q, 0.0)
             wide = checker.check_arm(side, q, None)
@@ -251,9 +260,8 @@ def validate_fence(config: FenceConfig, *, station_name: str | None = None) -> l
                     )
                 )
     if all(f.level != "FAIL" for f in findings[1:]) and enabled:
-        findings.append(
-            Finding("PASS", "reference poses", "home and zero poses are clear for both arms, gripper closed and open")
-        )
+        names = " and ".join(poses) + (" poses are" if len(poses) > 1 else " pose is")
+        findings.append(Finding("PASS", "reference poses", f"{names} clear for both arms, gripper closed and open"))
     return findings
 
 
@@ -330,23 +338,26 @@ def connect_live() -> LiveStack:
         die(f"cannot reach the running stack ({exc}); start it with `kiteos teleop|collect start|rollout start`")
 
 
-def parse_positions(text: str) -> dict[str, float] | list[float]:
-    """``--positions``: JSON object name->value, JSON list, or comma-separated 12/14 values."""
+def parse_positions(text: str, dof: int = 6) -> dict[str, float] | list[float]:
+    """``--positions``: JSON object name->value, JSON list, or comma-separated values: both arms
+    (2 x ``dof``), optionally followed by both grippers (dual OpenYAM: 12/14, OpenArm: 14/16)."""
     text = text.strip()
     value = json.loads(text) if text.startswith(("{", "[")) else [float(v) for v in text.split(",") if v.strip()]
     if isinstance(value, dict):
         return {str(k): float(v) for k, v in value.items()}
-    if isinstance(value, list) and len(value) in (12, 14):
+    if isinstance(value, list) and len(value) in (2 * dof, 2 * dof + 2):
         return [float(v) for v in value]
-    raise ValueError("positions must be a JSON object of joint names, or 12/14 values")
+    raise ValueError(f"positions must be a JSON object of joint names, or {2 * dof}/{2 * dof + 2} values")
 
 
-def as_named(positions: Mapping[str, float] | Sequence[float]) -> dict[str, float]:
-    from kiteos.safety.kinematics import DUAL_OPENYAM_JOINTS
+def as_named(positions: Mapping[str, float] | Sequence[float], robot: Any = None) -> dict[str, float]:
+    """Joint name -> value; a list is in the robot's joint order (default: the dual OpenYAM)."""
+    from kiteos.robots import get_robot
 
     if isinstance(positions, Mapping):
         return dict(positions)
-    return {name: float(v) for name, v in zip(DUAL_OPENYAM_JOINTS[: len(positions)], positions, strict=True)}
+    names = get_robot(robot).joint_names
+    return {name: float(v) for name, v in zip(names[: len(positions)], positions, strict=True)}
 
 
 def print_report(title: str, report: Mapping[str, Any]) -> bool:
@@ -374,7 +385,10 @@ def print_report(title: str, report: Mapping[str, Any]) -> bool:
 def check(
     positions: Annotated[
         Optional[str],
-        typer.Option("--positions", help="Check these instead of the live pose (JSON object/list or 12/14 values)."),
+        typer.Option(
+            "--positions",
+            help="Check these instead of the live pose (JSON object/list, or both arms' joint values [+ grippers]).",
+        ),
     ] = None,
     offline: Annotated[
         bool, typer.Option("--offline", help="Evaluate with the local fence file; no running stack needed.")
@@ -385,19 +399,20 @@ def check(
     """Show the running fence status and check the current (or given) pose. Exit 1 on violation."""
     from kiteos.safety.fence import FenceChecker
 
+    path = fence_file(fence, station)
+    robot = load_fence(path).profile if path.is_file() else load_station(station).profile
     parsed = None
     if positions is not None:
         try:
-            parsed = parse_positions(positions)
+            parsed = parse_positions(positions, robot.dof)
         except (ValueError, json.JSONDecodeError) as exc:
             die(f"--positions: {exc}", code=2)
 
-    path = fence_file(fence, station)
     if offline:
         if parsed is None:
             die("--offline needs --positions", code=2)
         config = load_fence(path)
-        report = FenceChecker(config).check(as_named(parsed)).to_dict()
+        report = FenceChecker(config).check(as_named(parsed, robot)).to_dict()
         ok = print_report(f"local fence {path.name}", report)
         raise typer.Exit(0 if ok else 1)
 
@@ -406,7 +421,7 @@ def check(
         status = live.fence_status()
         console.print("[kite]Running fence[/kite]")
         console.print(json.dumps(status, indent=2, default=str))
-        named = as_named(parsed) if parsed is not None else live.joint_positions()
+        named = as_named(parsed, robot) if parsed is not None else live.joint_positions()
         ok = print_report("running stack", live.fence_check(named))
         if path.is_file():
             try:
@@ -444,7 +459,9 @@ def mount_matrix(xyz: Sequence[float], rpy: Sequence[float]) -> np.ndarray:
 
 def frame_poses(config: FenceConfig) -> dict[str, np.ndarray]:
     """World pose of each zone frame from the fence mounts."""
-    poses = {"dual_openyam_base": np.eye(4)}
+    from kiteos.robots import WORLD_ALIAS
+
+    poses = {WORLD_ALIAS: np.eye(4), config.profile.world_frame: np.eye(4)}
     for side in ("left", "right"):
         mount = config.mounts[side]
         poses[f"{side}_base"] = mount_matrix(mount.xyz, mount.rpy)
@@ -544,7 +561,7 @@ def preview_zone(
             )
     trial = upsert_zone(config, zone.model_copy(update={"enabled": True}))
     checker = FenceChecker(trial)
-    for pose_name, q in REFERENCE_POSES.items():
+    for pose_name, q in reference_poses(trial).items():
         for side in ("left", "right"):
             if not any(z.enabled and z.applies(side) for z in trial.zones):
                 console.print(f"  {side} arm at {pose_name}: [fail]NO ZONE APPLIES to this arm[/fail]")
@@ -593,7 +610,11 @@ def teach(
     arms: Annotated[str, typer.Option("--arms", help="Arms used to touch the surface: both, left or right.")] = "both",
     frame: Annotated[
         Optional[str],
-        typer.Option("--frame", help="Zone frame: dual_openyam_base, left_base or right_base (default: per --arms)."),
+        typer.Option(
+            "--frame",
+            help="Zone frame: the robot's world frame (dual_openyam_base, openarm_body_link0), left_base or "
+            "right_base (default: per --arms).",
+        ),
     ] = None,
     applies_to: Annotated[
         Optional[str],
@@ -617,17 +638,23 @@ def teach(
     station: StationOption = None,
 ) -> None:
     """Teach a flat keep-out surface (glass, wall) by touching it with the fingertips."""
-    from kiteos.safety.kinematics import ARM_JOINTS, DualArmKinematics
+    from kiteos.safety.kinematics import DualArmKinematics
     from kiteos.safety.teach import MIN_FIT_POINTS, TeachError, plane_zone_from_points
 
     if arms not in ("both", "left", "right"):
         die("--arms must be both, left or right", code=2)
     sides = ["left", "right"] if arms == "both" else [arms]
     name = name or default_zone_name(arms)
-    zone_frame = frame or ("dual_openyam_base" if arms == "both" else f"{arms}_base")
-    if zone_frame not in ("dual_openyam_base", "left_base", "right_base"):
-        die("--frame must be dual_openyam_base, left_base or right_base", code=2)
-    if arms == "both" and zone_frame != "dual_openyam_base" and applies_to is None:
+    path = fence_file(fence, station)
+    config = load_fence(path)
+    robot = config.profile
+    world = robot.world_frame
+    zone_frame = frame or (world if arms == "both" else f"{arms}_base")
+    if zone_frame == "world":
+        zone_frame = world
+    if zone_frame not in (world, "left_base", "right_base"):
+        die(f"--frame must be {world} (or world), left_base or right_base", code=2)
+    if arms == "both" and zone_frame != world and applies_to is None:
         die(
             f"--arms both with --frame {zone_frame}: say which arms the zone protects with "
             "--applies-to (both, left or right), or teach each arm in its own frame "
@@ -635,7 +662,7 @@ def teach(
             code=2,
         )
     # A zone in one arm's base frame is only trustworthy for that arm (the spacing may be unmeasured).
-    applies = applies_to or (zone_frame.removesuffix("_base") if zone_frame != "dual_openyam_base" else "both")
+    applies = applies_to or (zone_frame.removesuffix("_base") if zone_frame != world else "both")
     if applies not in ("both", "left", "right"):
         die("--applies-to must be both, left or right", code=2)
     touched = set(sides)
@@ -643,13 +670,11 @@ def teach(
         warn(f"the zone will protect the {applies} arm, but it is touched with {' and '.join(sides)}")
     per_arm_min = max(min_points, MIN_FIT_POINTS if len(sides) == 1 else 2)
 
-    path = fence_file(fence, station)
-    config = load_fence(path)
     conflict = replacement_conflict(config, name, zone_frame, applies)
     if conflict and not replace:
         die(f"{conflict}.\nUse another --name, or pass --replace if that is intended.", code=2)
     poses = frame_poses(config)
-    kinematics = DualArmKinematics(mounts={s: poses[f"{s}_base"] for s in ("left", "right")})
+    kinematics = DualArmKinematics(mounts={s: poses[f"{s}_base"] for s in ("left", "right")}, robot=robot)
 
     live = connect_live()
     points_world: list[np.ndarray] = []
@@ -677,12 +702,12 @@ def teach(
                 except Exception as exc:
                     warn(f"cannot read the joint state ({exc}); try again")
                     continue
-                missing = [j for j in ARM_JOINTS[side] if j not in joints]
+                missing = [j for j in robot.arm_joints[side] if j not in joints]
                 if missing:
-                    warn(f"joint state is missing {missing}; is the stack running?")
+                    warn(f"joint state is missing {missing}; is the stack running (for the {robot.title})?")
                     continue
-                q6 = np.array([joints[j] for j in ARM_JOINTS[side]], dtype=float)
-                tip = kinematics.fingertip(side, q6)
+                q = np.array([joints[j] for j in robot.arm_joints[side]], dtype=float)
+                tip = kinematics.fingertip(side, q)
                 points_world.append(tip)
                 count += 1
                 console.print(f"  recorded {side} fingertip at ({tip[0]:.3f}, {tip[1]:.3f}, {tip[2]:.3f}) m (world)")
@@ -760,7 +785,7 @@ def sweep(config: FenceConfig, samples: int = 2000, seed: int = 0) -> tuple[list
     qs: dict[str, np.ndarray] = {}
     for side in ("left", "right"):
         limits = base.joint_limits[side]
-        qs[side] = rng.uniform(limits[:, 0], limits[:, 1], size=(samples, 6))
+        qs[side] = rng.uniform(limits[:, 0], limits[:, 1], size=(samples, base.dof))
 
     def blocked_fraction(checker: FenceChecker, side: str) -> float:
         return float(np.mean([not checker.check_arm(side, q, None).ok for q in qs[side]]))
@@ -801,21 +826,27 @@ class ReplayResult:
         return len({(h.episode, h.frame) for h in self.held if h.stream == "action"})
 
 
-def _feature_order(info: Mapping[str, Any], key: str) -> list[int] | None:
-    """Indices that reorder a dataset vector into DUAL_OPENYAM_JOINTS order (None = already)."""
+def _feature_order(info: Mapping[str, Any], key: str, joints: Sequence[str] | None = None) -> list[int] | None:
+    """Indices that reorder a dataset vector into the robot's joint order (None = already).
+
+    ``joints`` defaults to the dual OpenYAM's ``DUAL_OPENYAM_JOINTS``."""
     from kiteos.safety.kinematics import DUAL_OPENYAM_JOINTS
 
+    order = list(joints) if joints is not None else list(DUAL_OPENYAM_JOINTS)
     names = info.get("features", {}).get(key, {}).get("names")
-    if not names or list(names) == list(DUAL_OPENYAM_JOINTS):
+    if not names or list(names) == order:
         return None
-    missing = [n for n in DUAL_OPENYAM_JOINTS if n not in names]
+    missing = [n for n in order if n not in names]
     if missing:
         raise ValueError(f"{key} lacks joints {missing}")
-    return [list(names).index(n) for n in DUAL_OPENYAM_JOINTS]
+    return [list(names).index(n) for n in order]
 
 
-def iter_dataset(root: Path) -> Iterator[tuple[int, int, np.ndarray | None, np.ndarray | None]]:
-    """(episode, frame, state14, action14) for every frame of a LeRobot v3 dataset, in order."""
+def iter_dataset(
+    root: Path, joints: Sequence[str] | None = None
+) -> Iterator[tuple[int, int, np.ndarray | None, np.ndarray | None]]:
+    """(episode, frame, state, action) for every frame of a LeRobot v3 dataset, in order; the
+    vectors are in ``joints`` order (default: the dual OpenYAM's 14 joints)."""
     try:
         import pyarrow.parquet as pq
     except ImportError as exc:  # pragma: no cover - pyarrow ships with the runtime
@@ -825,7 +856,7 @@ def iter_dataset(root: Path) -> Iterator[tuple[int, int, np.ndarray | None, np.n
     if not info_path.is_file():
         raise FileNotFoundError(f"not a LeRobot dataset (no meta/info.json): {root}")
     info = json.loads(info_path.read_text())
-    orders = {key: _feature_order(info, key) for key in ("observation.state", "action")}
+    orders = {key: _feature_order(info, key, joints) for key in ("observation.state", "action")}
     files = sorted((root / "data").glob("**/*.parquet"))
     if not files:
         raise FileNotFoundError(f"no parquet files under {root / 'data'}")
@@ -871,15 +902,16 @@ def replay_dataset(
     from kiteos.safety.fence import FenceChecker
 
     checker = FenceChecker(config)
+    robot, dof = config.profile, checker.dof
     result = ReplayResult(dataset=root)
     previous: dict[str, np.ndarray] = {}
     last_episode: int | None = None
     episodes: set[int] = set()
     sides = [
-        (side, slice(0, 6) if side == "left" else slice(6, 12), 12 if side == "left" else 13)
+        (side, slice(0, dof) if side == "left" else slice(dof, 2 * dof), 2 * dof if side == "left" else 2 * dof + 1)
         for side in ("left", "right")
     ]
-    for count, (episode, frame, state, action) in enumerate(iter_dataset(root)):
+    for count, (episode, frame, state, action) in enumerate(iter_dataset(root, robot.joint_names)):
         if episode != last_episode:
             previous.clear()
             last_episode = episode

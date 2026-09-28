@@ -32,7 +32,6 @@ through ``kiteos quest proxy``).
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -51,11 +50,13 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
+from kiteos.blueprints.manipulation import KiteManipulationModule
 from kiteos.blueprints.webxr import INSTANCE_NAME as ARM_TELEOP_INSTANCE_NAME
 from kiteos.blueprints.webxr import KiteArmTeleopModule
 from kiteos.safety.coordinator import KiteDualOpenYamCoordinator
 
 COORDINATOR_INSTANCE_NAME = "ControlCoordinator"
+MANIPULATION_INSTANCE_NAME = "manipulationmodule"  # keeps the --manipulationmodule.* flags
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
 VISER_HOST = "127.0.0.1"
 
@@ -139,8 +140,10 @@ def dual_openyam_gripper_tasks() -> list[TaskConfig]:
 def manipulation_blueprint(
     visualization: ManipulationVisualizationConfig | None = None,
 ) -> Blueprint:
-    """ManipulationModule for the dual-arm model (viser on 127.0.0.1 by default)."""
-    return ManipulationModule.blueprint(
+    """ManipulationModule for the dual-arm model (viser on 127.0.0.1 by default), with the fence
+    zones in its scene (``--manipulationmodule.fence-path``)."""
+    return KiteManipulationModule.blueprint(
+        instance_name=MANIPULATION_INSTANCE_NAME,
         model=DUAL_OPENYAM_WEBXR_MODEL,
         kinematics=DUAL_OPENYAM_WEBXR_PINK,
         visualization=visualization if visualization is not None else default_visualization(),
