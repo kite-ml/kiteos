@@ -1,0 +1,18 @@
+# Copyright 2026 Kite ML.
+# Hot-reload fence for tests/e2e/test_mock_fence_e2e.py (mock arms only; never use on hardware).
+#
+# Same glass as fence_e2e.yaml but 4 cm closer (x = 0.46 m). The left arm, held ~3 cm in front of
+# the 0.50 m plane, is ~1 cm INSIDE this zone after the reload; home stays clear by ~5.1 cm.
+version: 1
+station: kiteos-e2e-mock
+mode: enforce
+margin_m: 0.03
+gripper_stroke_m: 0.05
+refuse_start_inside: true
+zones:
+  - kind: half_space
+    name: e2e_glass_closer
+    frame: dual_openyam_base
+    point: [0.46, 0.0, 0.0]
+    normal: [1.0, 0.0, 0.0]
+    applies_to: both

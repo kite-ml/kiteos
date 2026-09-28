@@ -1,0 +1,18 @@
+# Copyright 2026 Kite ML.
+#
+# KiteOS: stable SocketCAN names for the two Damiao CAN adapters (gs_usb, 1d50:606f).
+#
+# The kernel gs_usb driver exposes each adapter as canN in USB enumeration order,
+# so can0/can1 can silently swap the left and right arms after a replug or reboot.
+# These rules pin the name to the adapter's USB serial instead. The serials must
+# match `can.left.darwin` / `can.right.darwin` in config/station.yaml (on macOS the
+# adapters are addressed by serial directly, so the same values apply).
+#
+# Install: deploy/install.sh --with-udev   (copies to /etc/udev/rules.d/)
+# Apply:   unplug and replug both adapters, then `kiteos can setup` (1 Mbit/s, sudo).
+# Check:   udevadm info -a -p /sys/class/net/can_left | grep -m1 'ATTRS{serial}'
+#
+# Renaming only happens on "add"; no bitrate or link state is set here.
+
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="006C003E4845500F20303750", NAME="can_left"
+SUBSYSTEM=="net", ACTION=="add", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="003900374845500F20303750", NAME="can_right"

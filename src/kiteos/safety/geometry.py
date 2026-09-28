@@ -1,0 +1,192 @@
+# Copyright 2026 Kite ML.
+"""Covering spheres for the OpenYAM arm links.
+
+The URDF has no collision geometry, so each link is covered by a few spheres fitted to its visual
+meshes (every mesh vertex and 40k surface samples are inside; radii include a +5 mm pad). The
+two finger spheres are inflated by ``stroke_m * opening`` because the URDF models the fingers
+closed. Extra spheres (wrist cameras, cables, a held tool) come from the fence config.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+import numpy as np
+
+from kiteos.safety.kinematics import ARM_SIDES, LINK_NAMES
+
+Vec3 = tuple[float, float, float]
+
+# Sphere centre in the link frame (m) and radius (m, +5 mm pad already included).
+LINK_SPHERES: dict[str, tuple[tuple[Vec3, float], ...]] = {
+    "link1": (((-0.0315, -0.003, -0.0092), 0.065),),
+    "link2": (
+        ((0.0, -0.0334, 0.0235), 0.070),
+        ((0.0, -0.0323, 0.132), 0.070),
+        ((0.0, -0.0334, 0.2406), 0.070),
+    ),
+    "link3": (
+        ((-0.0276, -0.0349, -0.0044), 0.080),
+        ((-0.0624, -0.0349, -0.0572), 0.077),
+        ((-0.0608, -0.033, -0.1491), 0.061),
+        ((-0.06, -0.0344, -0.2327), 0.061),
+    ),
+    "link4": (
+        ((-0.0184, 0.03, -0.0134), 0.066),
+        ((-0.0694, 0.0339, -0.0667), 0.051),
+    ),
+    "link5": (((0.0345, 0.0, -0.0011), 0.054),),
+    "gripper": (
+        ((0.0, 0.0, -0.0157), 0.044),
+        ((0.0, 0.0, -0.0681), 0.068),
+        ((0.0, 0.0, -0.1206), 0.046),
+    ),
+}
+# (link, index) of the spheres that cover the fingers and grow with the gripper opening.
+FINGER_SPHERES: tuple[tuple[str, int], ...] = (("gripper", 1), ("gripper", 2))
+DEFAULT_GRIPPER_STROKE_M = 0.05
+
+
+class ExtraSphereLike(Protocol):
+    """Structural type of ``kiteos.safety.fence.ExtraSphere`` (here to avoid an import cycle)."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def side(self) -> str: ...
+    @property
+    def link(self) -> str: ...
+    @property
+    def center(self) -> Sequence[float]: ...
+    @property
+    def radius(self) -> float: ...
+
+
+@dataclass
+class Spheres:
+    """Spheres of one arm in the world frame."""
+
+    centers: np.ndarray  # (N, 3)
+    radii: np.ndarray  # (N,)
+    labels: list[str]  # "left.link3[1]", "left.camera", ...
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+
+def normalize_opening(gripper_opening: float | None) -> float:
+    """Gripper opening clipped to [0, 1]; unknown or non-finite counts as fully open (1.0)."""
+    if gripper_opening is None:
+        return 1.0
+    try:
+        value = float(gripper_opening)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(value):
+        return 1.0
+    return min(max(value, 0.0), 1.0)
+
+
+@dataclass(frozen=True, eq=False)
+class SphereModel:
+    """Link-frame sphere set of one arm, precomputed for fast batched evaluation."""
+
+    side: str
+    links: tuple[str, ...]  # link of each sphere
+    local_centers: np.ndarray  # (N, 3) in the link frame
+    base_radii: np.ndarray  # (N,)
+    finger_mask: np.ndarray  # (N,) bool: inflated by stroke * opening
+    labels: tuple[str, ...]
+
+    @classmethod
+    def for_arm(cls, side: str, extra: Iterable[ExtraSphereLike] = ()) -> SphereModel:
+        if side not in ARM_SIDES:
+            raise ValueError(f"side must be one of {ARM_SIDES}, got {side!r}")
+        links: list[str] = []
+        centers: list[Sequence[float]] = []
+        radii: list[float] = []
+        fingers: list[bool] = []
+        labels: list[str] = []
+        finger_set = set(FINGER_SPHERES)
+        for link, spheres in LINK_SPHERES.items():
+            for i, (center, radius) in enumerate(spheres):
+                links.append(link)
+                centers.append(center)
+                radii.append(radius)
+                fingers.append((link, i) in finger_set)
+                labels.append(f"{side}.{link}[{i}]")
+        for sphere in extra:
+            if sphere.side not in ("both", side):
+                continue
+            if sphere.link not in LINK_NAMES:
+                raise ValueError(
+                    f"extra sphere {sphere.name!r}: unknown link {sphere.link!r} "
+                    f"(one of {', '.join(LINK_NAMES)})"
+                )
+            radius = float(sphere.radius)
+            if not (math.isfinite(radius) and radius > 0.0):
+                raise ValueError(f"extra sphere {sphere.name!r}: radius must be > 0")
+            links.append(sphere.link)
+            centers.append(tuple(float(v) for v in sphere.center))
+            radii.append(radius)
+            fingers.append(False)
+            labels.append(f"{side}.{sphere.name}")
+        local = np.asarray(centers, dtype=float).reshape(-1, 3)
+        if not np.all(np.isfinite(local)):
+            raise ValueError("sphere centres must be finite")
+        return cls(
+            side=side,
+            links=tuple(links),
+            local_centers=local,
+            base_radii=np.asarray(radii, dtype=float),
+            finger_mask=np.asarray(fingers, dtype=bool),
+            labels=tuple(labels),
+        )
+
+    def __len__(self) -> int:
+        return len(self.labels)
+
+    def radii(self, gripper_opening: float | None, stroke_m: float) -> np.ndarray:
+        """Per-sphere radii with the finger spheres inflated by ``stroke_m * opening``."""
+        grow = max(float(stroke_m), 0.0) * normalize_opening(gripper_opening)
+        return self.base_radii + self.finger_mask * grow
+
+    def link_indices(self, link_index: Mapping[str, int]) -> np.ndarray:
+        """Index of each sphere's link in a chain's pose array (see ``ArmChain.link_index``)."""
+        return np.array([link_index[link] for link in self.links], dtype=np.intp)
+
+    def centers_from_poses(self, poses: np.ndarray, link_idx: np.ndarray) -> np.ndarray:
+        """World sphere centres (M, N, 3) from batched link poses (M, L, 4, 4)."""
+        T = poses[:, link_idx]
+        return np.einsum("mnij,nj->mni", T[..., :3, :3], self.local_centers) + T[..., :3, 3]
+
+    def centers(self, link_poses: Mapping[str, np.ndarray]) -> np.ndarray:
+        """World sphere centres (N, 3) from a ``{link: 4x4}`` dict."""
+        out = np.empty((len(self.links), 3))
+        for i, link in enumerate(self.links):
+            T = link_poses[link]
+            out[i] = T[:3, :3] @ self.local_centers[i] + T[:3, 3]
+        return out
+
+
+def arm_spheres(
+    side: str,
+    link_poses: Mapping[str, np.ndarray],
+    gripper_opening: float | None,
+    stroke_m: float = DEFAULT_GRIPPER_STROKE_M,
+    extra: Iterable[ExtraSphereLike] = (),
+) -> Spheres:
+    """World-frame covering spheres of one arm.
+
+    ``link_poses`` is the output of ``DualArmKinematics.link_poses(side, q6)``. Extra spheres
+    whose ``side`` is ``"both"`` or ``side`` are appended, labelled ``"<side>.<name>"``.
+    """
+    model = SphereModel.for_arm(side, extra)
+    return Spheres(
+        centers=model.centers(link_poses),
+        radii=model.radii(gripper_opening, stroke_m),
+        labels=list(model.labels),
+    )

@@ -1,0 +1,20 @@
+# Copyright 2026 Kite ML.
+# Fence used by tests/e2e/test_mock_fence_e2e.py (mock arms only; never use on hardware).
+#
+# A "glass" half-space at x = 0.50 m in dual_openyam_base, between the left fingertip at home
+# (x ~= 0.389 m) and the fingertip of the reach pose [0, 2.0, 2.0, 0, 0, 0] (x ~= 0.631 m).
+# Home clears it by ~9.1 cm with the gripper closed (4.1 cm fully open), above the 3 cm margin;
+# the reach pose is ~15 cm inside it.
+version: 1
+station: kiteos-e2e-mock
+mode: enforce
+margin_m: 0.03
+gripper_stroke_m: 0.05
+refuse_start_inside: true
+zones:
+  - kind: half_space
+    name: e2e_glass
+    frame: dual_openyam_base
+    point: [0.50, 0.0, 0.0]
+    normal: [1.0, 0.0, 0.0]
+    applies_to: both

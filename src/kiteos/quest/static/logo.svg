@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="KiteOS">
+  <!-- Copyright 2026 Kite ML. -->
+  <title>KiteOS</title>
+  <g transform="rotate(-12 30 24)">
+    <path d="M30 3 L12 19 L30 19 Z" fill="#DCEBFF"/>
+    <path d="M30 3 L48 19 L30 19 Z" fill="#8DB9F7"/>
+    <path d="M12 19 L30 44 L30 19 Z" fill="#2F80ED"/>
+    <path d="M48 19 L30 44 L30 19 Z" fill="#1B5FC4"/>
+    <path d="M12 19 H48 M30 3 V44" fill="none" stroke="#0B1F3A" stroke-opacity="0.35" stroke-width="1.2"/>
+  </g>
+  <path d="M34 44 C30 50 40 52 37 57 S42 62 50 61" fill="none" stroke="#8DB9F7" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M35 50.5 L39.5 49 L38.6 53.2 Z" fill="#DCEBFF"/>
+  <path d="M40.2 58.4 L44.4 56.4 L44 60.6 Z" fill="#DCEBFF"/>
+</svg>

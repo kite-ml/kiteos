@@ -1,0 +1,55 @@
+# Copyright 2026 Kite ML.
+# KiteOS fence example: a glass window in front of the robot. Reference: docs/FENCE.md
+#
+# Copy to config/fence.yaml (or point `fence:` in the station file at your copy), then
+# replace the example plane with a taught one: `kiteos fence teach`. Always run
+# `kiteos fence test --dataset <recorded dataset>` before going live, so a misplaced zone
+# that blocks normal task motion is caught offline.
+#
+# World frame dual_openyam_base: +x forward, +y toward the left arm, +z up, z=0 at the mount.
+
+version: 1
+station: my-site-dual-openyam
+mode: enforce
+margin_m: 0.05
+gripper_stroke_m: 0.05
+
+mounts:
+  left:  {xyz: [0.0, 0.31, 0.0], rpy: [0.0, 0.0, 0.0]}
+  right: {xyz: [0.0, -0.31, 0.0], rpy: [0.0, 0.0, 0.0]}
+
+# Wrist cameras stick out of the gripper; cover them once measured. Gripper frame: +z points back
+# toward the wrist, +y is the side of the URDF's tip_left finger (check which side your camera is on).
+extra_spheres:
+  - {name: wrist_camera, side: both, link: gripper, center: [0.0, -0.055, -0.02], radius: 0.035}
+
+zones:
+  # Everything at x > 0.60 m (the glass and beyond) is forbidden for both arms.
+  - kind: half_space
+    name: glass_window
+    frame: dual_openyam_base
+    applies_to: both
+    enabled: true
+    point: [0.60, 0.0, 0.0]
+    normal: [1.0, 0.0, 0.0]
+  # Keep the arms above the table top (z = 0 is the mounting surface).
+  - kind: half_space
+    name: table
+    enabled: false
+    point: [0.0, 0.0, 0.0]
+    normal: [0.0, 0.0, -1.0]
+  # A fixture on the right side of the table, only reachable by the right arm.
+  - kind: box
+    name: fixture
+    applies_to: right
+    enabled: false
+    center: [0.35, -0.55, 0.10]
+    half_extents: [0.10, 0.10, 0.10]
+    rpy: [0.0, 0.0, 0.0]
+
+max_joint_speed_rad_s: 2.5
+joint_limit_margin_rad: 0.01
+interpolation_step_rad: 0.01
+refuse_start_inside: true
+max_feedforward_tau_nm: 0.0
+# allow_no_zones: true   # only while teaching the first zone on real arms

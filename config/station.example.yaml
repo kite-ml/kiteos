@@ -1,0 +1,45 @@
+# Copyright 2026 Kite ML.
+# KiteOS station file template. Copy to config/station.yaml (or point $KITEOS_STATION
+# at your copy) and fill in every REPLACE value, then run `kiteos doctor`.
+#
+# Per-platform values are {darwin: ..., linux: ...} or one scalar used on both.
+# Relative paths resolve against this file's directory (then its parent).
+
+station: my-site-dual-openyam      # one word; typed by the operator to confirm --real runs
+task: "close the box"              # language instruction recorded with every episode
+session_prefix: close-box          # optional; defaults to a slug of `task`
+
+can:
+  # macOS: the adapter's USB serial (`kiteos can status` lists them).
+  # Linux: the SocketCAN interface name. Install deploy/udev/*.rules so the adapters
+  # always come up as can_left / can_right (enumeration order is not stable), then
+  # run `kiteos can setup` after every plug or reboot.
+  left:  {darwin: REPLACE_LEFT_USB_SERIAL, linux: can_left}
+  right: {darwin: REPLACE_RIGHT_USB_SERIAL, linux: can_right}
+
+cameras:
+  # macOS: AVFoundation index. Linux: /dev/v4l/by-id/... (unique serials) or
+  # /dev/v4l/by-path/... (fixed USB ports), the *-video-index0 node.
+  left_wrist:  {darwin: 0, linux: /dev/v4l/by-path/REPLACE-left-wrist-video-index0}
+  right_wrist: {darwin: 2, linux: /dev/v4l/by-path/REPLACE-right-wrist-video-index0}
+  top:         {darwin: 1, linux: /dev/v4l/by-path/REPLACE-top-video-index0}
+
+fence: config/fence.yaml
+recordings_dir: ~/teleop_stack/dimos/recordings
+datasets_dir: ~/teleop_stack/dimos/datasets
+
+hub:
+  repo_id: your-org/your-dataset
+  private: true
+
+policy:
+  checkpoint: ~/teleop_stack/policies/REPLACE-checkpoint
+  device: auto                     # auto | cuda | mps | cpu
+
+dimos_root: ~/teleop_stack/dimos
+viser_host: 127.0.0.1
+
+quest:
+  port: 8080
+  upstream: https://127.0.0.1:8443
+  adb: auto

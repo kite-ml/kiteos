@@ -1,0 +1,13 @@
+# Copyright 2026 Kite ML.
+# Hot-reload fence for tests/e2e/test_mock_fence_e2e.py (mock arms only; never use on hardware).
+#
+# No zones (joint limits and the rate limit only): a trajectory toward the reach pose passes the
+# precheck under this fence; fence_e2e.yaml is reloaded while it executes, so the adapter must
+# hold the arm and the supervisor must cancel the trajectory (once).
+version: 1
+station: kiteos-e2e-mock
+mode: enforce
+margin_m: 0.03
+gripper_stroke_m: 0.05
+refuse_start_inside: true
+zones: []

@@ -1,0 +1,242 @@
+/* Copyright 2026 Kite ML. */
+/*
+ * KiteOS look for the dimOS WebXR teleop page. The KiteOS Quest proxy links this after
+ * dimOS's teleop.css so these rules win the cascade. Everything is local (system fonts,
+ * no CDNs) because the tethered headset has no internet. Type is sized for reading in
+ * the Quest browser at arm's length.
+ */
+
+:root {
+    --kite-navy: #0B1F3A;
+    --kite-navy-raised: #132C4F;
+    --kite-navy-line: #22426D;
+    --kite-sky: #2F80ED;
+    --kite-sky-hover: #1F6FDB;
+    --kite-sky-soft: #8DB9F7;
+    --kite-white: #FFFFFF;
+    --kite-muted: #B7C6DB;
+    --kite-ok: #3DDC97;
+    --kite-warn: #F5C451;
+    --kite-bad: #FF6B6B;
+    --kite-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --kite-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body {
+    font-family: var(--kite-font);
+    background-color: var(--kite-navy);
+    background-image: radial-gradient(ellipse at 50% 40%, #173763 0%, var(--kite-navy) 70%);
+    color: var(--kite-white);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---- dimOS teleop page overrides (selectors from teleop.css) ---- */
+
+h1 {
+    font-size: 56px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--kite-white);
+    margin-bottom: 36px;
+}
+
+#status {
+    font-size: 30px;
+    font-weight: 500;
+    color: var(--kite-white);
+    background-color: var(--kite-navy-raised);
+    border: 2px solid var(--kite-sky);
+    border-radius: 16px;
+    padding: 18px 36px;
+    min-width: 420px;
+    max-width: 90vw;
+}
+
+button {
+    font-family: var(--kite-font);
+    font-size: 30px;
+    font-weight: 700;
+    padding: 24px 64px;
+    color: var(--kite-white);
+    background-color: var(--kite-sky);
+    border-radius: 16px;
+}
+
+button:hover {
+    background-color: var(--kite-sky-hover);
+}
+
+button:focus-visible {
+    outline: 4px solid var(--kite-sky-soft);
+    outline-offset: 4px;
+}
+
+button:disabled {
+    color: var(--kite-muted);
+    background-color: #34506F;
+}
+
+button.disconnect {
+    color: var(--kite-white);
+    background-color: transparent;
+    border: 2px solid var(--kite-muted);
+}
+
+button.disconnect:hover {
+    background-color: var(--kite-navy-line);
+}
+
+/* ---- KiteOS header ---- */
+
+.kiteos-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 200; /* above dimOS's #ui (z-index 100) */
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 32px;
+    background-color: rgba(11, 31, 58, 0.94);
+    border-bottom: 1px solid var(--kite-navy-line);
+    font-family: var(--kite-font);
+    color: var(--kite-white);
+}
+
+.kiteos-header__logo {
+    width: 44px;
+    height: 44px;
+    flex: none;
+}
+
+.kiteos-header__name {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.kiteos-pill {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 22px;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    color: var(--kite-white);
+    background-color: var(--kite-navy-raised);
+    border: 2px solid var(--kite-navy-line);
+    border-radius: 999px;
+}
+
+.kiteos-pill::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    flex: none;
+    border-radius: 50%;
+    background-color: var(--kite-muted);
+}
+
+.kiteos-pill[data-state="ok"] {
+    border-color: rgba(61, 220, 151, 0.6);
+}
+
+.kiteos-pill[data-state="ok"]::before {
+    background-color: var(--kite-ok);
+}
+
+.kiteos-pill[data-state="warn"] {
+    border-color: rgba(245, 196, 81, 0.7);
+}
+
+.kiteos-pill[data-state="warn"]::before {
+    background-color: var(--kite-warn);
+}
+
+.kiteos-pill[data-state="down"] {
+    border-color: rgba(255, 107, 107, 0.7);
+}
+
+.kiteos-pill[data-state="down"]::before {
+    background-color: var(--kite-bad);
+}
+
+/* ---- "teleop server not running" page served by the proxy ---- */
+
+body.kiteos-offline {
+    margin: 0;
+    min-height: 100vh;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 120px 32px 32px;
+}
+
+.kiteos-offline__card {
+    max-width: 900px;
+    padding: 48px 56px;
+    text-align: center;
+    background-color: var(--kite-navy-raised);
+    border: 1px solid var(--kite-navy-line);
+    border-radius: 24px;
+}
+
+.kiteos-offline__card h1 {
+    margin: 0 0 24px;
+    font-size: 48px;
+}
+
+.kiteos-offline__card p {
+    margin: 0 0 16px;
+    font-size: 28px;
+    line-height: 1.45;
+    color: var(--kite-muted);
+}
+
+.kiteos-offline__card code {
+    white-space: nowrap;
+    font-family: var(--kite-mono);
+    font-size: 0.9em;
+    color: var(--kite-white);
+    background-color: var(--kite-navy-line);
+    padding: 2px 10px;
+    border-radius: 8px;
+}
+
+.kiteos-offline__card .kiteos-offline__detail {
+    margin: 24px 0 0;
+    font-size: 20px;
+}
+
+@media (max-width: 640px) {
+    .kiteos-header {
+        padding: 12px 16px;
+        gap: 10px;
+    }
+
+    .kiteos-header__name {
+        font-size: 22px;
+    }
+
+    .kiteos-pill {
+        font-size: 18px;
+        padding: 8px 14px;
+    }
+
+    h1 {
+        font-size: 40px;
+    }
+
+    #status {
+        min-width: 0;
+    }
+
+    .kiteos-offline__card {
+        padding: 32px 24px;
+    }
+}

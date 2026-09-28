@@ -1,0 +1,43 @@
+# Copyright 2026 Kite ML.
+# KiteOS station file for the Kite lab dual OpenYAM rig.
+# Loaded by every `kiteos` command (override with --station PATH or $KITEOS_STATION;
+# config/station.local.yaml, git-ignored, is merged on top when present).
+# Per-platform values resolve by host OS: `darwin` on macOS, `linux` everywhere else.
+
+station: kite-lab-dual-openyam
+task: "close the box"
+session_prefix: close-box          # recordings/<session_prefix>-NNN
+
+can:
+  # macOS: gs_usb USB serial numbers. Linux: SocketCAN interface names pinned by
+  # deploy/udev (the serials do NOT work on Linux). Bring them up with `kiteos can setup`.
+  left:  {darwin: "006C003E4845500F20303750", linux: can_left}
+  right: {darwin: "003900374845500F20303750", linux: can_right}
+
+cameras:
+  # macOS: AVFoundation indices, which follow the USB port (check with `kiteos cameras check`).
+  # Linux: stable /dev/v4l/by-id or by-path device paths (integer indices are not stable;
+  # each UVC camera registers two /dev/video nodes). Discover them with `kiteos cameras list`.
+  left_wrist:  {darwin: 0, linux: /dev/v4l/by-path/REPLACE-left-wrist-video-index0}
+  right_wrist: {darwin: 2, linux: /dev/v4l/by-path/REPLACE-right-wrist-video-index0}
+  top:         {darwin: 1, linux: /dev/v4l/by-path/REPLACE-top-video-index0}
+
+fence: config/fence.yaml           # keep-out zones; required for --real
+recordings_dir: ~/teleop_stack/dimos/recordings
+datasets_dir: ~/teleop_stack/dimos/datasets
+
+hub:
+  repo_id: kiteml/dual-openyam-close-box
+  private: true                    # customer-site data stays private unless --public
+
+policy:
+  checkpoint: ~/teleop_stack/policies/act-close-box-step30000
+  device: auto                     # auto -> cuda | mps | cpu
+
+dimos_root: ~/teleop_stack/dimos
+viser_host: 127.0.0.1              # 0.0.0.0 exposes the viewer (and arm control) to the LAN
+
+quest:
+  port: 8080                       # headset opens http://localhost:8080/teleop over adb reverse
+  upstream: https://127.0.0.1:8443
+  adb: auto                        # auto | off | /path/to/adb

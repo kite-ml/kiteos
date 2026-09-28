@@ -1,0 +1,13 @@
+# Copyright 2026 Kite ML.
+#
+# KiteOS: let the logged-in operator (and the plugdev group) talk to a USB-tethered
+# Meta Quest over adb, so `kiteos quest proxy` can keep `adb reverse tcp:8080` applied.
+# Meta/Oculus USB vendor ID: 2833.
+#
+# Numbered 70-, before systemd's 73-seat-late.rules, which is where the uaccess tag is turned
+# into an ACL for the logged-in user (a later file's tag is never acted on).
+# Install: deploy/install.sh --with-udev   (copies to /etc/udev/rules.d/; removes the old
+# 81-kiteos-quest.rules)
+# Apply:   replug the headset and accept "Allow USB debugging" inside it.
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="2833", MODE="0660", GROUP="plugdev", TAG+="uaccess"

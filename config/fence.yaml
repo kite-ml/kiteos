@@ -1,0 +1,75 @@
+# Copyright 2026 Kite ML.
+# KiteOS safety fence for kite-lab-dual-openyam. Reference: docs/FENCE.md
+#
+# The fence runs inside the ControlCoordinator, after every command source (Quest teleop,
+# policy trajectories, gripper tasks, direct joint commands) and right before the motors.
+# Each arm is modelled as padded covering spheres; a commanded target (and the straight
+# joint-space motion to it) is refused when any sphere would come within `margin_m` of an
+# enabled zone. A refused arm HOLDS at its last safe target; it never goes limp. A gripper
+# may only open when the wider fingers stay clear too (closing is always allowed).
+#
+# Workflow:
+#   kiteos fence validate            # schema + sanity checks (no robot needed)
+#   kiteos fence test                # how much of the joint space each zone blocks
+#   kiteos fence test --dataset DIR  # replay recorded episodes: would normal motion be held?
+#   kiteos fence teach               # touch the glass with the fingertip, fit + write a zone
+#   kiteos fence check               # live status + check of the current pose (stack running)
+#
+# `kiteos teleop|collect start|rollout start --real` refuses to start without this file, and
+# refuses a file that leaves an arm without an enabled zone unless `allow_no_zones: true`. Coordinates are metres/radians in the world frame
+# `dual_openyam_base`: +x forward (gripper approach at home), +y toward the LEFT arm, +z up,
+# z=0 on the base mounting surface.
+
+version: 1
+station: kite-lab-dual-openyam
+
+# enforce: hold arms at the boundary. monitor: log only (mock arms only; refused with --real).
+mode: enforce
+
+# Extra clearance added to every sphere (never below 0.02). It must cover how far the REAL arm
+# lags or overshoots its command, plus calibration error of the taught zones. The fence checks
+# every commanded step, but one step can move the fingertip a lot: at the 2.5 rad/s cap a 10 ms
+# tick is up to ~4.5 cm of fingertip travel (0.01 rad on every joint is ~1.8 cm). Prefer 5 cm;
+# 3 cm only with a slow speed limit and a verified approach test.
+margin_m: 0.05
+
+# Finger spheres are inflated by gripper_stroke_m * opening (0 closed .. 1 open): the travel of
+# ONE finger from closed to fully open (unmeasured default 5 cm; measure it).
+gripper_stroke_m: 0.05
+
+# Arm base poses in dual_openyam_base. The URDF default spacing (0.62 m) comes from a
+# simulation scene: MEASURE the real rig, or teach zones in each arm's own frame
+# (frame: left_base / right_base), which does not depend on this spacing.
+mounts:
+  left:  {xyz: [0.0, 0.31, 0.0], rpy: [0.0, 0.0, 0.0]}
+  right: {xyz: [0.0, -0.31, 0.0], rpy: [0.0, 0.0, 0.0]}
+
+# Additional spheres rigidly attached to a link (centre in the link frame, metres; radius already
+# padded). The wrist cameras are NOT MEASURED yet: until they are, both sides of each gripper get a
+# 3.5 cm camera sphere (gripper frame: +z points back toward the wrist, +y is the side of the URDF's
+# tip_left finger). Measure the real camera, keep the sphere on its side and delete the other.
+extra_spheres:
+  - {name: wrist_camera_pos_y, side: both, link: gripper, center: [0.0, 0.055, -0.02], radius: 0.035}
+  - {name: wrist_camera_neg_y, side: both, link: gripper, center: [0.0, -0.055, -0.02], radius: 0.035}
+
+# Keep-out / keep-in zones. Kinds:
+#   half_space  - forbidden side of a plane; `normal` points INTO the forbidden side
+#   box         - forbidden solid box (center, half_extents, rpy)
+#   keep_in_box - allowed volume; every sphere must stay inside
+# Each zone also takes frame (dual_openyam_base | left_base | right_base),
+# applies_to (both | left | right) and enabled (true | false).
+# Teach the glass with `kiteos fence teach` (per arm: `--arms left`, then `--arms right`) instead
+# of editing numbers by hand; config/fence.example.yaml shows every kind.
+zones: []
+
+# None are taught on this rig yet, so real runs need this explicit opt-in (only joint limits and
+# the speed limit protect the arms meanwhile, and --real shows a loud warning). `kiteos fence
+# teach` switches it off once both arms have a zone. Never leave it on at a customer site.
+allow_no_zones: true
+
+# Final-stage limits applied to every commanded arm target.
+max_joint_speed_rad_s: 2.5      # above teleop (2.0) and trajectory (1.0) caps; --real refuses > 3.0
+joint_limit_margin_rad: 0.01    # URDF limits shrunk by this much
+interpolation_step_rad: 0.01    # max joint step between swept samples of one command (<= 0.02)
+refuse_start_inside: true       # refuse to activate if an arm already violates a zone
+max_feedforward_tau_nm: 0.0     # torque feed-forward passed to the arm motors (Damiao adds gravity comp)
