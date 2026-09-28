@@ -1,26 +1,27 @@
 # KiteOS POC — build contracts (read first)
 
-KiteOS is a Kite-branded extension of dimOS. It is one Python distribution (`kiteos`, src layout)
-installed *into the dimOS virtualenv* (`uv pip install --no-deps -e <repo>`). It never modifies dimOS
-source. dimOS is pinned to `dual-collection @ 3e7cac5dc34bb766617d30486d7d9f1b2d89d93a`
-(checkout: `~/teleop_stack/dimos`). Python 3.12. Everything must work on macOS and Linux.
+KiteOS extends a pinned base runtime. It is one Python distribution (`kiteos`, src layout)
+installed *into the base runtime's virtualenv* (`uv pip install --no-deps -e <repo>`). It never
+modifies the base runtime's source, which is pinned to commit `3e7cac5dc34bb766617d30486d7d9f1b2d89d93a`
+(`PIN` file under `deploy/`; the checkout sits next to KiteOS under `~/teleop_stack`). Python 3.12.
+Everything must work on macOS and Linux.
 
 Hard rules
-- Do not edit anything under `~/teleop_stack/dimos`. Extend via subclassing, entry points, CLI flags.
-- `import kiteos` must stay dependency-free (it is also imported inside dimOS's isolated LeRobot env
+- Do not edit anything in the base runtime checkout. Extend via subclassing, entry points, CLI flags.
+- `import kiteos` must stay dependency-free (it is also imported inside the base runtime's isolated LeRobot env
   via PYTHONPATH). `kiteos/__init__.py` imports nothing heavy. `kiteos.safety.*` depends only on
-  numpy + pydantic + pyyaml (no dimOS, no pinocchio) — except `kiteos.safety.coordinator` and
-  `kiteos.safety.adapter`, which import dimOS.
-- Code copied/adapted from dimOS keeps its Apache-2.0 header plus a line
+  numpy + pydantic + pyyaml (no base runtime, no pinocchio) — except `kiteos.safety.coordinator` and
+  `kiteos.safety.adapter`, which import the base runtime.
+- Code copied/adapted from the base runtime keeps its original Apache-2.0 header plus a line
   `# Modified by Kite ML for KiteOS.` Everything else: `# Copyright 2026 Kite ML.`
 - Safety code fails closed: never raise out of the control tick; on any error hold position.
 - No real hardware is touched by anything in this build. Mock hardware only.
-- Tests never touch the default dimOS bus: tests/conftest.py moves the suite to a private
+- Tests never touch the default runtime bus: tests/conftest.py moves the suite to a private
   LCM/Zenoh bus, stubs the CLI's host probes and points KiteOS run-state files at a temp dir.
 
 ## Layout
 ```
-pyproject.toml                  # name "kiteos", console script "kiteos", dimos.blueprints entry points
+pyproject.toml                  # name "kiteos", console script "kiteos", setup (blueprint) entry points
 CONTRACTS.md  README.md  NOTICE
 src/kiteos/__init__.py          # __version__ = "0.1.0"; BRAND constants only
 src/kiteos/brand.py             # BRAND_NAME="KiteOS", colors, ascii banner
@@ -30,34 +31,34 @@ src/kiteos/safety/kinematics.py # numpy FK for dual OpenYAM
 src/kiteos/safety/geometry.py   # covering spheres per link
 src/kiteos/safety/zones.py      # zone models + signed distance
 src/kiteos/safety/fence.py      # FenceConfig, FenceChecker, FenceReport
-src/kiteos/safety/adapter.py    # FencedWholeBodyAdapter (imports dimOS)
-src/kiteos/safety/coordinator.py# KiteDualOpenYamCoordinator (imports dimOS)
+src/kiteos/safety/adapter.py    # FencedWholeBodyAdapter (imports the base runtime)
+src/kiteos/safety/coordinator.py# KiteDualOpenYamCoordinator (imports the base runtime)
 src/kiteos/safety/teach.py      # plane fitting / teach helpers (pure numpy)
 src/kiteos/blueprints/teleop.py      # dual_openyam_teleop   (Blueprint object)
 src/kiteos/blueprints/collection.py  # dual_openyam_collection (Blueprint object)
 src/kiteos/blueprints/rollout.py     # dual_openyam_rollout, dual_openyam_rollout_recorded (Blueprint objects)
-src/kiteos/blueprints/webxr.py       # KiteArmTeleopModule: dimOS ArmTeleopModule, server on 127.0.0.1
+src/kiteos/blueprints/webxr.py       # KiteArmTeleopModule: the runtime's ArmTeleopModule, server on 127.0.0.1
 src/kiteos/yamlio.py            # load_yaml_unique (duplicate YAML keys are errors)
 src/kiteos/rollout/module.py    # DualArmPolicyModule (port of kite_rollout, fixed guards)
-src/kiteos/rollout/runtime.py   # DualArmPolicyRuntime (runs in dimOS isolated LeRobot env)
+src/kiteos/rollout/runtime.py   # DualArmPolicyRuntime (runs in the base runtime's isolated LeRobot env)
 src/kiteos/quest/proxy.py       # branded HTTP->HTTPS Quest proxy + adb reverse keeper
 src/kiteos/quest/static/        # brand.css, logo.svg, status.js
 src/kiteos/quest/vendor/esm/    # vendored esm.sh modules (copied from legacy/tools/vendor/esm)
 src/kiteos/cli/__init__.py      # Typer app `kiteos` (main)
 src/kiteos/cli/*.py             # doctor, cameras, can, quest, teleop, collect, rollout, fence, upload, stop
 src/kiteos/cli/runs.py          # host stack detection, KiteOS run-state files, private bus, bus probe
-src/kiteos/data/dual_openyam.urdf    # vendored copy of dimOS data/dual_openyam_abc_box_v2/dual_openyam.urdf
+src/kiteos/data/dual_openyam.urdf    # vendored copy of the base runtime's dual OpenYAM URDF
 config/station.example.yaml  config/station.yaml  config/fence.example.yaml  config/fence.yaml
                                 # <name>.local.yaml next to the station file used is always merged on top
-deploy/install.sh  deploy/udev/*.rules  deploy/dimos/dual-collection.bundle  deploy/dimos/PIN
+deploy/install.sh  deploy/udev/*.rules  deploy/<runtime>/PIN + git bundle   # the pinned base runtime
 docs/RUNBOOK.md  docs/FENCE.md
 tests/...
 ```
 
-## Joint vector (from dimOS `dimos.robot.manipulators.dual_openyam.joints`)
+## Joint vector (from the base runtime's dual OpenYAM joint list)
 `DUAL_OPENYAM_JOINTS = [left_joint1..6, right_joint1..6, "left_arm/gripper", "right_arm/gripper"]`
 Arm joints in rad (passed straight to motors). Grippers: normalized opening 0 (closed) .. 1 (open).
-kiteos.safety must not import dimOS; it redefines these name lists identically (a test asserts equality).
+kiteos.safety must not import the base runtime; it redefines these name lists identically (a test asserts equality).
 
 ## Kinematics (kiteos.safety.kinematics)
 World frame `dual_openyam_base`: +x forward (gripper approach at home), +y toward left arm, +z up,
@@ -165,14 +166,14 @@ class FenceChecker:
     def check_escape_path(self, side, segments[(q_from, q_to, opening)]) -> ArmReport  # precheck when starting inside
 ```
 
-## Enforcement (kiteos.safety.adapter / kiteos.safety.coordinator) — imports dimOS
+## Enforcement (kiteos.safety.adapter / kiteos.safety.coordinator) — imports the base runtime
 `FencedWholeBodyAdapter(inner, *, joint_names: list[str], checker: FenceChecker, on_event=None, clock=time.monotonic)`
-implements the dimOS WholeBodyAdapter protocol (connect, disconnect, is_connected, read_motor_states,
+implements the base runtime's WholeBodyAdapter protocol (connect, disconnect, is_connected, read_motor_states,
 has_motor_states, read_imu, get_limits, write_motor_commands) + activate/deactivate (delegate if the inner
 has them). write_motor_commands(cmds: list[MotorCommand] len 14), per arm independently:
 1. requested q6 from cmds; if any non-finite -> hold.
 2. stale target: a raw arm request bit-identical to the one last refused (hold, E-STOP or error) ->
-   hold without re-checking, until a different request arrives (dimOS re-sends pre-fence targets).
+   hold without re-checking, until a different request arrives (the control loop re-sends pre-fence targets).
 3. clamp to URDF limits (minus margin); rate-limit vs last written target: step <= max_joint_speed_rad_s * clamp(dt, 0.001, 0.02).
 4. accept if check_arm_motion(last_written -> candidate) ok; else accept if FenceChecker.is_escape_motion
    (per (zone, sphere) pair along the dense samples: pairs within margin never lose clearance, clear
@@ -207,7 +208,7 @@ and return False (coordinator raises). Initialise last_written = measured.
   On real hardware: raise on real_hardware_problems(config) (monitor, unprotected arm without
   allow_no_zones, speed > 3.0). An empty fence file is a load error.
 - `start()`: shadow `applied_joint_position_command.publish` with the rewriting publisher BEFORE
-  super().start() (dimOS's TickLoop captures port.publish), then verify the tick loop uses it
+  super().start() (the runtime's TickLoop captures port.publish), then verify the tick loop uses it
   (fallback: wrap `TickLoop._publish_command_callback`, assert attr exists).
 - `set_estop(estopped)`: fenced.latch_estop, cancel_trajectory() when estopped, then super().
 - `execute_trajectory(trajectory)` and `task_invoke(<JointTrajectoryTask>, "execute"|"on_joint_command", ...)`:
@@ -220,15 +221,15 @@ and return False (coordinator raises). Initialise last_written = measured.
 - Fence events on the tick thread must never call coordinator RPCs (non re-entrant locks); a daemon
   supervisor thread cancels an executing trajectory at most once per hold episode.
 
-## Blueprints (dimos.blueprints entry points; names must match ^[a-z0-9]+(-[a-z0-9]+)*$)
+## Blueprints (entry points; names must match ^[a-z0-9]+(-[a-z0-9]+)*$)
+Registered in `pyproject.toml` under the base runtime's blueprint entry-point group:
 ```
-[project.entry-points."dimos.blueprints"]
 dual-openyam-teleop     = "kiteos.blueprints.teleop:dual_openyam_teleop"
 dual-openyam-collection = "kiteos.blueprints.collection:dual_openyam_collection"
 dual-openyam-rollout    = "kiteos.blueprints.rollout:dual_openyam_rollout"
 dual-openyam-rollout-recorded = "kiteos.blueprints.rollout:dual_openyam_rollout_recorded"
 ```
-Run as `dimos run kiteos.dual-openyam-teleop ...`. All use `KiteDualOpenYamCoordinator` with
+The runtime launches them by name (`kiteos.dual-openyam-teleop` etc.; the CLI does this). All use `KiteDualOpenYamCoordinator` with
 instance_name "ControlCoordinator" (so flags are `--controlcoordinator.left-can-port`,
 `--controlcoordinator.right-can-port`, `--controlcoordinator.fence-path`). Cameras: instance names
 `left_wrist`, `right_wrist`, `top`; flags `--left-wrist.hardware.camera-index <int|/dev path>` etc.
@@ -236,10 +237,10 @@ Viser binds 127.0.0.1 by default (flag to open it); the Quest WebXR server too (
 instance "armteleopmodule", `--armteleopmodule.server-host`). Camera defaults are the lab Mac's
 mapping (left_wrist 0, top 1, right_wrist 2); the CLI always passes the station's devices.
 Collection = teleop + 3 cameras + collection_recorder
-(DUAL_OPENYAM_COLLECTION) + EpisodeMonitorModule(instance "episodes"), mirroring dimOS
-learning_collection.py. Rollout = port of kite_rollout with the KiteOS coordinator; the trajectory
+(DUAL_OPENYAM_COLLECTION) + EpisodeMonitorModule(instance "episodes"), mirroring the base runtime's
+stock dual OpenYAM collection setup. Rollout = port of kite_rollout with the KiteOS coordinator; the trajectory
 task's velocity_limits (1.0 per joint) are explicit; `-rollout-recorded` adds the recorder.
-With no CAN ports given, the coordinator uses dimOS's mock adapter (safe for testing).
+With no CAN ports given, the coordinator uses the runtime's mock adapter (safe for testing).
 
 ## Station config (kiteos.config) — YAML, `KITEOS_STATION` env or `config/station.yaml`
 ```yaml
@@ -248,12 +249,12 @@ task: "close the box"
 can: {left: {darwin: 006C003E4845500F20303750, linux: can_left}, right: {darwin: 003900374845500F20303750, linux: can_right}}
 cameras: {left_wrist: {darwin: 0, linux: /dev/v4l/by-path/REPLACE}, right_wrist: {darwin: 2, linux: ...}, top: {darwin: 1, linux: ...}}
 fence: config/fence.yaml        # relative to the station file
-recordings_dir: ~/teleop_stack/dimos/recordings
-datasets_dir: ~/teleop_stack/dimos/datasets
+recordings_dir: <runtime checkout>/recordings
+datasets_dir: <runtime checkout>/datasets
 hub: {repo_id: kiteml/dual-openyam-close-box, private: true}
 policy: {checkpoint: ~/teleop_stack/policies/act-close-box-step30000, device: auto,   # auto -> cuda|mps|cpu
          max_start_jump: 0.3, max_joint_speed: 3.0}                                    # rollout chunk guards
-dimos_root: ~/teleop_stack/dimos
+# ...plus the base runtime checkout location (see config/station.yaml)
 viser_host: 127.0.0.1
 quest: {port: 8080, upstream: https://127.0.0.1:8443, adb: auto}
 ```
@@ -261,15 +262,16 @@ quest: {port: 8080, upstream: https://127.0.0.1:8443, adb: auto}
 ("darwin"/"linux"; other -> "linux" values), expanding `~`. `.fence_path()` absolute.
 
 ## CLI (`kiteos`, Typer) — prints a KiteOS banner; all commands support --station PATH
-- `kiteos doctor` — environment, pinned dimOS commit, entry points visible (`dimos list`), recorder binary,
-  URDF, station+fence validation, FK self-test, adb, CAN (darwin: `dimos hardware can list`; linux: `ip link`),
+- `kiteos doctor` — environment, pinned base runtime commit, KiteOS setups registered, recorder binary,
+  URDF, station+fence validation, FK self-test, adb, CAN (darwin: the runtime's adapter listing; linux: `ip link`),
   cameras enumerate, HF auth. Exit non-zero on blocking failures.
 - `kiteos teleop [--real] [--no-cameras]`, `kiteos collect start [--real] [--session NAME]`,
   `kiteos collect controls`, `kiteos rollout start --checkpoint ... [--real] [--speed]`, `kiteos rollout controls`
-  -> `dimos run kiteos.<blueprint> --config <empty> <flags from station>` in the dimOS root with
+  -> the runtime's `run` command for `kiteos.<blueprint>` with `--config <empty> <flags from station>`,
+  in the base runtime checkout, with
   `uv run --no-sync` and PYTHONPATH=<repo>/src. Always pinned: `--controlcoordinator.require-fence-on-hardware true`,
   `--controlcoordinator.expect-mock true|false`. Refused: CONTROLCOORDINATOR__/G__/TRANSPORTS__ keys in
-  the environment or <dimos_root>/.env; another dimOS stack on the host (registry, KiteOS run-state,
+  the environment or the base runtime checkout's `.env`; another robot stack on the host (registry, KiteOS run-state,
   process scan, 8443/8095 listeners, and for --real a passive bus listen). `--real` requires a fence
   passing real_hardware_problems + interactive safety confirmation. Without `--real` no CAN ports are
   passed (mock arms), and the run gets a private bus (LCM port + zenoh scouting group), free
@@ -283,6 +285,6 @@ quest: {port: 8080, upstream: https://127.0.0.1:8443, adb: auto}
   `kiteos stop [--pid]` (graceful SIGTERM, KiteOS never kills; typed confirmation unless the run is
   proven mock; the recorder gets `--recorder.shutdown-timeout 100`).
 - `kiteos fence show|validate|check|teach|test` (see docs/FENCE.md). `check` connects to a running stack
-  (`Dimos.connect()` -> ControlCoordinator RPC `fence_status`/`fence_check`); `teach` records fingertip points
+  (the runtime's client connection -> ControlCoordinator RPC `fence_status`/`fence_check`); `teach` records fingertip points
   from live joint positions (RPC `get_joint_state` or the coordinator_joint_state stream) and fits a plane;
   `test` runs an offline sweep and replays LeRobot datasets through the fence.

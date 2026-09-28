@@ -1,6 +1,6 @@
 # KiteOS Quest teleop proxy
 
-Lets a USB-tethered Meta Quest drive the arms through the dimOS WebXR teleop server, with
+Lets a USB-tethered Meta Quest drive the arms through the WebXR teleop server, with
 the page branded as KiteOS and no internet needed on the headset.
 
 ```
@@ -8,15 +8,15 @@ Quest browser                      robot computer
 http://localhost:8080/teleop ──USB (adb reverse)──▶ KiteOS proxy 127.0.0.1:8080
                                                       │  HTTP + WebSocket relay
                                                       ▼
-                                              dimOS WebXR server https://127.0.0.1:8443
+                                              WebXR teleop server https://127.0.0.1:8443
 ```
 
 - The headset opens `http://localhost:8080/teleop`. Browsers treat `http://localhost` as a
-  secure context, so WebXR works without accepting dimOS's self-signed certificate. The
-  proxy speaks HTTPS to dimOS with certificate verification off (it is local and self-signed).
+  secure context, so WebXR works without accepting the teleop server's self-signed certificate.
+  The proxy speaks HTTPS to the server with certificate verification off (it is local and self-signed).
 - `adb reverse tcp:8080 tcp:8080` maps the headset's localhost to this machine. The proxy
   re-applies it every 3 s, so sleep and replug recover by themselves.
-- The teleop WebSocket (`/ws`) is relayed both ways, including dimOS's close reason (for
+- The teleop WebSocket (`/ws`) is relayed both ways, including the server's close reason (for
   example "A WebXR control client is already connected").
 
 ## Run
@@ -30,7 +30,7 @@ python -m kiteos.quest.proxy --no-adb      # same module, no adb management
 | --- | --- | --- |
 | `--host` | `127.0.0.1` | Listen address. Keep it on loopback; the teleop page drives real arms. |
 | `--port` | `8080` | Listen port, and the port reversed onto the headset. |
-| `--upstream` | `https://127.0.0.1:8443` | dimOS WebXR server. |
+| `--upstream` | `https://127.0.0.1:8443` | WebXR teleop server. |
 | `--no-adb` | off | Do not manage `adb reverse` (status then reports `adb: disabled`). |
 | `--adb-serial` | none | Only manage this headset (`adb -s SERIAL`). Without it, every ready device gets the mapping. |
 | `--adb-path` | auto | adb binary. Auto-discovery: `PATH`, `$ANDROID_HOME`/`$ANDROID_SDK_ROOT`, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/Library/Android/sdk/platform-tools` on macOS, or `/usr/bin`, `/usr/local/bin`, `~/Android/Sdk/platform-tools` on Linux. |
@@ -61,42 +61,42 @@ The proxy logs each adb state change once:
 | Path | Behaviour |
 | --- | --- |
 | `/` | Redirects to `/teleop`. |
-| `/teleop` | dimOS page with KiteOS branding (see below). |
-| `/static/teleop.js` | dimOS script with `https://esm.sh/` imports rewritten to the proxy's origin. |
+| `/teleop` | Stock teleop page with KiteOS branding (see below). |
+| `/static/teleop.js` | Stock teleop script with `https://esm.sh/` imports rewritten to the proxy's origin. |
 | esm.sh module paths | Served from `vendor/esm/` (offline). |
-| `/ws` (any Upgrade request) | WebSocket relay to dimOS. |
+| `/ws` (any Upgrade request) | WebSocket relay to the teleop server. |
 | `/kiteos/*` | `static/` files: `brand.css`, `logo.svg`, `status.js`. |
 | `/kiteos/api/status` | `{"proxy": "ok", "upstream": "up"\|"down", "adb": "connected"\|"unauthorized"\|"absent"\|"disabled", "adb_detail": "...", "version": "0.1.0"}` |
-| anything else | Proxied to dimOS. Hop-by-hop headers are stripped, bodies are fetched uncompressed and every response gets `Cache-Control: no-store`. Upstream redirects are rewritten to the proxy's origin. |
+| anything else | Proxied to the teleop server. Hop-by-hop headers are stripped, bodies are fetched uncompressed and every response gets `Cache-Control: no-store`. Upstream redirects are rewritten to the proxy's origin. |
 
-If dimOS is not running, HTML requests get a KiteOS "Teleop server is not running" page that
+If the teleop server is not running, HTML requests get a KiteOS "Teleop server is not running" page that
 reloads every 3 s; other requests get a plain-text 502.
 
 ## Branding
 
-dimOS is never modified. For `GET /teleop` returning `text/html`, the proxy:
+The teleop server is never modified. For `GET /teleop` returning `text/html`, the proxy:
 
-- replaces `<title>` and `<h1>` "DimOS WebXR Teleop" with "KiteOS Teleop";
+- replaces the stock `<title>` and `<h1>` text with "KiteOS Teleop";
 - adds `/kiteos/brand.css` and `/kiteos/status.js` just before `</head>`, after `teleop.css`,
   so the KiteOS colours win the cascade;
 - adds a header after `<body>` with the logo and a status pill (`#kiteos-status`), which
-  `status.js` updates from `/kiteos/api/status`. It never touches dimOS's own elements.
+  `status.js` updates from `/kiteos/api/status`. It never touches the page's own elements.
 
-Every anchor must occur exactly once. If dimOS changes the page and any anchor is missing or
+Every anchor must occur exactly once. If the stock page changes and any anchor is missing or
 repeated, the stock page is served unmodified and a warning is logged: branding must never
-break teleop. The test `test_branding_matches_pinned_dimos_page` runs the branding against the
-installed dimOS page, so drift shows up in CI rather than on the headset.
+break teleop. A test runs the branding against the installed stock page, so drift shows up in
+CI rather than on the headset.
 
 Branding only reaches headsets that go through the proxy. Opening `https://<host>:8443/teleop`
-directly shows the stock dimOS page. The in-headset HUD (drawn on a canvas by `teleop.js`)
-keeps dimOS's colours.
+directly shows the stock page. The in-headset HUD (drawn on a canvas by `teleop.js`) keeps its
+stock colours.
 
 ## Vendored modules
 
-`teleop.js` imports `https://esm.sh/jsr/@dimos/msgs@<version>`. `vendor/esm/` holds that
+`teleop.js` imports its message module from esm.sh at a pinned version. `vendor/esm/` holds that
 module graph, mirrored by `legacy/tools/vendor_esm.py` (keyed by URL path; bare module URLs
-are stored as `<path>/__entry__.mjs`). The version is pinned by dimOS's `teleop.js`. When
-dimOS bumps it, the proxy logs "teleop.js imports ..., which is not vendored" and the test
+are stored as `<path>/__entry__.mjs`). The version is pinned by the stock `teleop.js`. When
+the pin moves to a new version, the proxy logs "teleop.js imports ..., which is not vendored" and the test
 above fails. To refresh the modules, run `vendor_esm.py <new esm.sh URL>` on a machine with
 internet access and copy its `vendor/esm` tree here.
 
@@ -104,7 +104,7 @@ internet access and copy its `vendor/esm` tree here.
 
 The proxy listens on 127.0.0.1 only, and the headset reaches it over USB. Do not pass
 `--host 0.0.0.0`: anyone on the network could then open the teleop page and drive the arms.
-The WebXR server has no authentication. dimOS binds it to 0.0.0.0; the KiteOS blueprints bind it
+The WebXR server has no authentication. The runtime binds it to 0.0.0.0 by default; the KiteOS setups bind it
 to 127.0.0.1 (`KiteArmTeleopModule`). Block 8443 from the LAN with a firewall anyway, for stacks
 started outside KiteOS.
 

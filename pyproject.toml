@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kiteos"
 version = "0.1.0"
-description = "KiteOS: Kite's robot runtime for evaluation and data collection, built on dimOS"
+description = "KiteOS: Kite's robot runtime for evaluation and data collection"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Kite ML" }]

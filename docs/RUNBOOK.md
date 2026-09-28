@@ -1,7 +1,7 @@
 # KiteOS runbook: dual OpenYAM station
 
-The morning checklist for macOS and Linux. Commands assume the default layout
-(`~/teleop_stack/{kiteos,dimos,policies}`) and a configured `config/station.yaml`.
+The morning checklist for macOS and Linux. Commands assume the default layout that `deploy/install.sh` creates under `~/teleop_stack` (KiteOS,
+the base runtime checkout and `policies/`) and a configured `config/station.yaml`.
 Details: fence in [FENCE.md](FENCE.md), install in [README](../README.md#quickstart).
 
 > **The one rule:** stopping KiteOS (including Ctrl-C in the stack terminal, a crash, or the
@@ -14,7 +14,8 @@ Terminals used below: **T1** runs the stack (foreground), **T2** the controls, *
 
 - [ ] `~/teleop_stack/kiteos/deploy/install.sh` (Linux: add `--with-udev`, then log out and back in).
       Preview with `--dry-run`.
-- [ ] Hugging Face token with write access to the dataset org: `~/teleop_stack/dimos/.venv/bin/hf auth login`.
+- [ ] Hugging Face token with write access to the dataset org: when no token is found, `kiteos doctor`
+      prints the `hf auth login` command to run.
 - [ ] Policy checkpoint at the station's `policy.checkpoint` (validated: ACT `act-close-box-step30000`).
 - [ ] Site values in `config/station.yaml` (or `config/station.local.yaml`, which is git-ignored and
       merged on top): `station`, `task`, `hub.repo_id`, Linux camera paths.
@@ -36,11 +37,11 @@ Terminals used below: **T1** runs the stack (foreground), **T2** the controls, *
 
 ## 2. `kiteos doctor`
 
-Checks the environment, the dimOS pin, KiteOS blueprints (`dimos list`), the recorder binary, the URDF,
+Checks the environment, the base runtime pin, that the KiteOS setups are registered, the recorder binary, the URDF,
 the station and fence files, an FK self-test, adb, CAN, cameras and the HF login. It exits non-zero on
 blocking failures. Fix every blocking item before any `--real` run.
 
-- While any dimOS stack runs on the host, doctor does not list the CAN adapters (listing opens their
+- While any robot stack runs on the host, doctor does not list the CAN adapters (listing opens their
   USB descriptors); it prints a WARN instead. Run it again after `kiteos stop`.
 - Camera placeholders (`REPLACE`) are a FAIL: `collect` and `rollout` refuse to start with them.
   Teleop alone works with `--no-cameras`.
@@ -70,7 +71,7 @@ blocking failures. Fix every blocking item before any `--real` run.
 - **Linux:** the udev rule names the adapters `can_left` / `can_right` by USB serial
   (`deploy/udev/80-kiteos-can.rules`). After every plug-in or reboot, run `kiteos can setup`
   (runs `sudo ip link` at 1 Mbit/s). `kiteos can status` must show both UP. `can setup` leaves an
-  interface that is already UP at 1 Mbit/s alone. It refuses while a dimOS stack runs, because
+  interface that is already UP at 1 Mbit/s alone. It refuses while a robot stack runs, because
   taking a link down cuts the motors mid-motion (`--force` overrides).
 - New site or swapped adapters: on the first `--real` run, move one arm gently and confirm the expected
   arm follows.
@@ -124,16 +125,16 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
   The `--real` prompt shows the station and fence files and the zones, and asks you to type the
   station name.
 - T3 + headset as in section 5.
-- **Only one stack per host.** Every start command refuses while another dimOS stack runs on this
+- **Only one stack per host.** Every start command refuses while another robot stack runs on this
   machine. That includes stacks started outside KiteOS, such as `kite_rollout`. The check uses
-  dimOS's run registry, the KiteOS run files, a process scan, the 8443/8095 listeners and, for
+  the runtime's run registry, the KiteOS run files, a process scan, the 8443/8095 listeners and, for
   `--real`, a short passive listen on the bus.
 - **Mock runs (no `--real`) are isolated.** They get a private bus and their own WebXR/viser ports,
   and the coordinator refuses real arms. So a practice run can never reach a real stack.
   `--station-ports` keeps 8443/8095 (Quest practice). `--allow-concurrent` starts a mock run next to
   another stack (it still opens the cameras for collect/rollout).
-- KiteOS refuses to start when the environment or `~/teleop_stack/dimos/.env` sets
-  `CONTROLCOORDINATOR__*`, `G__*` or `TRANSPORTS__*`, and it ignores `~/.config/dimos/config`.
+- KiteOS refuses to start when the environment or the base runtime checkout's `.env` file sets
+  `CONTROLCOORDINATOR__*`, `G__*` or `TRANSPORTS__*`, and it ignores the runtime's per-user config file.
 
 ## 8. Collection
 
@@ -181,12 +182,12 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
 3. **Support both arms** (a person, or rest them on blocks).
 4. `kiteos stop` and type `stop` when prompted. It asks for confirmation for every run that is not
    proven to be mock arms. It sends SIGTERM only, and waits up to 300 s for the stack to exit:
-   - dimOS gives the recorder up to 100 s to finalize its file (`--recorder.shutdown-timeout`), then
+   - the runtime gives the recorder up to 100 s to finalize its file (`--recorder.shutdown-timeout`), then
      kills it;
-   - after stopping the modules, dimOS kills leftover worker processes 2 s after terminating them.
+   - after stopping the modules, the runtime kills leftover worker processes 2 s after terminating them.
 
    Never `kill -9`, never close T1 early. With several stacks running, `kiteos stop` lists them and
-   needs `--pid`. A stack KiteOS did not start (and dimOS did not register) is reported, never
+   needs `--pid`. A stack KiteOS did not start (and the runtime did not register) is reported, never
    guessed at: stop it in its own terminal.
 5. Arm power off. Ctrl-C the Quest proxy in T3. Unplug the Quest.
 6. `kiteos upload` if you collected.
@@ -195,12 +196,12 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `kiteos` not found, or `dimos list` shows no `kiteos.*` blueprints | A plain `uv sync` in dimOS removed the editable KiteOS install | `uv pip install --python ~/teleop_stack/dimos/.venv/bin/python --no-deps -e ~/teleop_stack/kiteos`, or re-run `install.sh`. In dimOS, use `uv run --no-sync` / `uv sync --inexact` only |
-| `doctor`: dimOS not at the pin | Checkout moved or has local edits | `git -C ~/teleop_stack/dimos checkout dual-collection` (the installer never resets it for you) |
+| `kiteos` not found, or `kiteos doctor` FAILs on the KiteOS setups | A plain `uv sync` in the base runtime checkout removed the editable KiteOS install | Re-run `deploy/install.sh` (safe to repeat); `kiteos doctor` also prints the exact reinstall command. In the base runtime checkout, use `uv run --no-sync` / `uv sync --inexact` only |
+| `doctor`: base runtime not at the pin | Checkout moved or has local edits | Run the `git ... checkout` command that `kiteos doctor` prints (the installer never resets it for you) |
 | macOS: cameras black or fail to open | Terminal lacks Camera permission | Run from a terminal app with Camera permission (section 3) |
 | Wrong image for a camera role | Cable or hub moved | Cover test, fix `cameras.<role>` |
 | Linux: dropped frames or "No space left on device" | USB bandwidth (uncompressed YUYV) | Spread the cameras across root ports |
-| Camera errors right after a restart | dimOS webcam thread did not recover | Wait about 5 s between stop and start |
+| Camera errors right after a restart | The camera capture thread did not recover | Wait about 5 s between stop and start |
 | Linux: `can_left` missing, `can0`/`can1` present | udev rule missing or serial mismatch | `install.sh --with-udev`, replug. Check the serial: `udevadm info -a -p /sys/class/net/can0 \| grep serial` |
 | Linux: CAN "Network is down" at start | Interfaces not set up since the last plug-in | `kiteos can setup` |
 | Linux: `gs_usb` module missing | Minimal or cloud kernel | `sudo apt install linux-modules-extra-$(uname -r)` |
@@ -209,13 +210,13 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
 | Quest connected but the arms do not move | Grips not both held, or the fence is holding | Hold both grips; `kiteos fence check` |
 | Arm freezes near the glass or an obstacle | Fence hold (expected) | Move away (escape motion is allowed); check `kiteos fence check` |
 | `--real` refuses to start | Fence file missing, empty or invalid; `monitor` mode; an arm without a zone (and no `allow_no_zones`); speed limit above 3 rad/s; or an arm already inside a zone | `kiteos fence validate`. Arm inside a zone: power off, reposition by hand, retry |
-| A start command says another dimOS stack is running | Another stack, a leftover process, or something on 8443/8095 | `kiteos stop` (or stop it in its own terminal). Mock practice next to it: `--allow-concurrent` |
-| Start refused because of `CONTROLCOORDINATOR__...` | A setting in the shell or in `~/teleop_stack/dimos/.env` would bypass the station file | Remove it; the station file and flags are the only source |
+| A start command says another robot stack is running | Another stack, a leftover process, or something on 8443/8095 | `kiteos stop` (or stop it in its own terminal). Mock practice next to it: `--allow-concurrent` |
+| Start refused because of `CONTROLCOORDINATOR__...` | A setting in the shell or in the base runtime checkout's `.env` file would bypass the station file | Remove it; the station file and flags are the only source |
 | Gripper does not open near the glass | The fence refuses an opening that would put the open fingers within the margin | Move the arm back first; closing always works |
 | Arm does not move again after a hold, although the target is now clear | Stale target: the fence keeps refusing the exact request it refused | Move the controller (any new target is checked again) |
 | Linux: sudo prompt about locked memory on first run | Memlock limit not active yet | `install.sh --with-udev`, then log out and back in (declining only slows local transport) |
-| `kiteos stop` takes minutes | Recorder finalizing a large file (dimOS allows it 100 s) | Wait. KiteOS never kills; re-run `kiteos stop` if it times out |
+| `kiteos stop` takes minutes | Recorder finalizing a large file (the runtime allows it 100 s) | Wait. KiteOS never kills; re-run `kiteos stop` if it times out |
 | Upload skips a session or reports "opcode 255" | Recording still open | `kiteos stop` first, then `kiteos upload` |
 | Collection fails at start mentioning `nix` | Recorder binary missing | Re-run `install.sh` without `--no-recorder` |
 | First rollout or upload stalls for minutes | LeRobot environment being built | One-off. Pre-warm with `install.sh` (without `--no-prewarm`) |
-| macOS: `dimos run --daemon` crashes | Known pyarrow fork issue on macOS | KiteOS always runs in the foreground; keep T1 open |
+| macOS: background (daemon) runs crash | Known pyarrow fork issue on macOS | KiteOS always runs in the foreground; keep T1 open |

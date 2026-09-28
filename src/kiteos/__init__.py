@@ -1,5 +1,5 @@
 # Copyright 2026 Kite ML.
-"""KiteOS: Kite's robot runtime, built on dimOS.
+"""KiteOS: Kite's robot runtime.
 
 Keep this module import-free: it is also imported inside dimOS's isolated
 LeRobot environment through PYTHONPATH.

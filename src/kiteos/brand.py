@@ -9,7 +9,7 @@ from __future__ import annotations
 
 BRAND_NAME = "KiteOS"
 COMPANY = "Kite ML"
-TAGLINE = "Kite's robot runtime for data collection and evaluation, built on dimOS"
+TAGLINE = "Kite's robot runtime for data collection and evaluation"
 WEBSITE = "https://kiteml.com"
 
 # Cotufa signal stops (Kite design system).

@@ -28,7 +28,7 @@ take this path. For each arm, independently, the fence then does the following:
    stay clear, and at least one pair within the margin must gain clearance. So no part of the arm
    ever gets closer to any zone while it is too close. The arm cannot trade one sphere or one
    zone against another.
-6. A **stale target stays refused.** dimOS re-sends the last pre-fence target of every joint that
+6. A **stale target stays refused.** The control loop re-sends the last pre-fence target of every joint that
    a command does not mention; for example, the gripper task sends only the gripper. An arm
    request that is bit-for-bit the one the fence last refused is held without being re-checked,
    until a different request arrives. So a held arm never drives off later by itself: not when the
@@ -50,7 +50,7 @@ Some other rules apply:
 - If an arm already violates the fence when the stack starts, the coordinator refuses to start
   when `refuse_start_inside: true`.
 - Recorded actions are rewritten to what was actually sent to the motors, grippers included, so a
-  dataset never contains a fenced-out action. The rewrite is installed before dimOS starts its
+  dataset never contains a fenced-out action. The rewrite is installed before the runtime starts its
   control loop, so this covers the first tick too.
 - On real hardware the coordinator refuses (at start and on `fence_reload`):
   - a fence that leaves an arm with no enabled zone, unless the file says `allow_no_zones: true`;
@@ -111,7 +111,8 @@ Box orientation uses URDF roll-pitch-yaw in radians, relative to the zone frame
   motion) and can overshoot under PD control. `margin_m` must cover this plus calibration error.
   Never set it below the enforced floor of 2 cm, and prefer 3–5 cm.
 - **It only covers commands that go through the KiteOS coordinator.** It does not cover other
-  tools that open the CAN bus directly, stock dimOS blueprints, or firmware-level motion.
+  tools that open the CAN bus directly, the base runtime's own setups (anything not named
+  `kiteos.*`, such as the legacy `start_session.sh` flow), or firmware-level motion.
 - **It cannot stop a person.** Someone pushing or back-driving an arm can move it into a zone. The
   fence reacts only to commands.
 - **Motors off means the arms fall.** Stopping the stack, a motor fault latch or a power loss
@@ -298,8 +299,8 @@ and shrinks a keep-in box.
 
 ## Mock end-to-end test
 
-`tests/e2e/test_mock_fence_e2e.py` (marker `mock_e2e`, about 45 s) launches
-`dimos run kiteos.dual-openyam-teleop --controlcoordinator.fence-path tests/fixtures/fence_e2e.yaml`
+`tests/e2e/test_mock_fence_e2e.py` (marker `mock_e2e`, about 45 s) launches the
+`kiteos.dual-openyam-teleop` setup with `--controlcoordinator.fence-path tests/fixtures/fence_e2e.yaml`
 in the foreground with mock arms. It uses the flags `kiteos teleop` pins for a mock run
 (`--config <empty>`, `--controlcoordinator.expect-mock true`, `--controlcoordinator.require-fence-on-hardware true`).
 It then drives the running `ControlCoordinator` over RPC:
@@ -328,11 +329,11 @@ What it does **not** prove: anything about the real arms. The mock adapter track
 exactly, so tracking lag, overshoot, CAN timing and calibration are untested (see "What the fence
 does not guarantee"). Quest teleop IK is not driven either. The test runs on a private bus and
 free ports, so it cannot reach a stack running on the default bus. Set
-`KITEOS_E2E_ARTIFACTS=<dir>` to keep the dimOS log and a JSON summary.
+`KITEOS_E2E_ARTIFACTS=<dir>` to keep the runtime log and a JSON summary.
 
 ## Limitations
 
-- **Model accuracy.** The kinematics come from the dimOS dual OpenYAM URDF, which has visual
+- **Model accuracy.** The kinematics come from the vendored dual OpenYAM URDF, which has visual
   meshes only. The spheres cover those meshes with a 5 mm pad. Any mismatch between the model and
   the real arm (link lengths, motor zero, flex) moves the real arm relative to the fence.
 - **Mount spacing.** The URDF's 0.62 m spacing between the bases comes from a simulation scene.
