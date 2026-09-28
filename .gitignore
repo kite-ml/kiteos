@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+recordings/
+datasets/
+*.mcap
+*.db
+policies/
+logs/
+.DS_Store
+# local station overrides (secrets/site data)
+config/station.local.yaml
+config/fence.local.yaml
