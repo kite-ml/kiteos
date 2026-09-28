@@ -93,8 +93,8 @@ def test_joint_name_lists() -> None:
     assert DUAL_OPENYAM_JOINTS[12:] == ["left_arm/gripper", "right_arm/gripper"]
 
 
-@pytest.mark.dimos
-def test_joint_names_match_dimos() -> None:
+@pytest.mark.runtime
+def test_joint_names_match_runtime() -> None:
     joints = pytest.importorskip("dimos.robot.manipulators.dual_openyam.joints")
     assert DUAL_OPENYAM_JOINTS == list(joints.DUAL_OPENYAM_JOINTS)
     assert ARM_JOINT_NAMES == list(joints.DUAL_OPENYAM_ARM_JOINTS)

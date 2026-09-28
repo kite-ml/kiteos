@@ -16,19 +16,19 @@
 
 """KiteOS Dual OpenYAM Quest data collection.
 
-Mirrors dimOS ``dual_openyam_quest_collection``
+Mirrors the runtime ``dual_openyam_quest_collection``
 (``dimos/robot/manipulators/dual_openyam/blueprints/learning_collection.py``) on
 top of the KiteOS teleop blueprint, so collection runs through the fenced
 ``KiteDualOpenYamCoordinator`` and records the actions the fence actually applied.
 
-Run with ``dimos run kiteos.dual-openyam-collection --recorder.recording <dir>
+Run with ``kiteos collect start`` (it calls ``kiteos-runtime run kiteos.dual-openyam-collection --recorder.recording <dir>
 --episodes.task "<task>"`` plus the station's camera devices
 (``--left-wrist.hardware.camera-index``, ``--right-wrist.hardware.camera-index``,
 ``--top.hardware.camera-index``: an index or a ``/dev/...`` path). The KiteOS CLI
 always passes the station's devices; the built-in defaults are the Kite lab Mac's
 AVFoundation indices (left_wrist 0, top 1, right_wrist 2, as legacy kite_rollout)
-so a bare ``dimos run`` there does not swap views, and they are wrong on any other
-host. Unlike the dimOS blueprint, viser and the WebXR server bind 127.0.0.1.
+so a bare ``kiteos-runtime run`` there does not swap views, and they are wrong on any other
+host. Unlike the runtime blueprint, viser and the WebXR server bind 127.0.0.1.
 """
 
 from collections.abc import Mapping

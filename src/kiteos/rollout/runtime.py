@@ -16,7 +16,7 @@
 
 """Isolated-environment implementation of ``kiteos.rollout.module.DualArmPolicyModule``.
 
-This module runs only inside dimOS's isolated LeRobot environment
+This module runs only inside the runtime's isolated LeRobot environment
 (``native/python/lerobot``), started by the host-side ``DualArmPolicyModule``.
 It imports torch, LeRobot and ``dimos_lerobot`` at import time, which exist only
 there, so host code refers to it by import string and never imports it.

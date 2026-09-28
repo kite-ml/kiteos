@@ -4,17 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kiteos"
-version = "0.1.0"
+version = "0.1.1"
 description = "KiteOS: Kite's robot runtime for evaluation and data collection"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Kite ML" }]
-# Installed into the dimOS virtualenv with `uv pip install --no-deps -e .`;
-# these are already provided by dimOS and listed for completeness.
+# Installed into the base runtime's virtualenv with `uv pip install --no-deps -e .`;
+# these are already provided by the runtime and listed for completeness.
 dependencies = ["numpy", "pydantic>=2", "pyyaml", "typer", "rich", "aiohttp"]
 
 [project.scripts]
 kiteos = "kiteos.cli:main"
+kiteos-runtime = "kiteos.runtime_cli:main"
 
 [project.entry-points."dimos.blueprints"]
 dual-openyam-teleop = "kiteos.blueprints.teleop:dual_openyam_teleop"
@@ -27,17 +28,17 @@ packages = ["src/kiteos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# pytest-asyncio (present in the dimOS venv the suite runs in) warns when this is unset.
+# pytest-asyncio (present in the runtime venv the suite runs in) warns when this is unset.
 asyncio_default_fixture_loop_scope = "function"
 markers = [
-    "dimos: needs the dimOS virtualenv (imports dimos)",
-    "mock_e2e: launches dimOS with mock hardware",
+    "runtime: needs the KiteOS runtime virtualenv (imports the runtime)",
+    "mock_e2e: launches the runtime with mock hardware",
 ]
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-# dimOS ships no py.typed marker.
+# The runtime ships no py.typed marker.
 module = ["dimos.*"]
 ignore_missing_imports = true

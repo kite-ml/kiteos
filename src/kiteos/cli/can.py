@@ -17,7 +17,7 @@ import typer
 from rich.markup import escape
 from rich.table import Table
 
-from kiteos.cli._common import StationOption, console, die, dimos_argv, kiteos_env, load_station, note, run_dimos
+from kiteos.cli._common import StationOption, console, die, runtime_argv, kiteos_env, load_station, note, run_runtime
 from kiteos.config import SIDES, StationConfig, platform_key
 
 app = typer.Typer(help="Set up and check the arms' CAN adapters.", no_args_is_help=True)
@@ -34,7 +34,7 @@ class CanState:
 
 
 def parse_gs_usb_list(text: str) -> list[str]:
-    """Serials from ``dimos hardware can list`` on macOS (``INDEX  SERIAL`` table)."""
+    """Serials from ``kiteos-runtime hardware can list`` on macOS (``INDEX  SERIAL`` table)."""
     serials = []
     for line in text.splitlines():
         match = re.match(r"\s*\d+\s+(\S+)\s*$", line)
@@ -55,7 +55,7 @@ def parse_ip_brief(text: str) -> dict[str, str]:
 
 def can_states(station: StationConfig) -> list[CanState]:
     """Which configured adapters this host can see (lists devices only; never opens a bus)."""
-    listing = run_dimos(station, "hardware", "can", "list", timeout=60.0)
+    listing = run_runtime(station, "hardware", "can", "list", timeout=60.0)
     states = []
     if platform_key() == "darwin":
         serials = parse_gs_usb_list(listing.stdout) if listing.ok else []
@@ -103,7 +103,7 @@ def interface_ready(details: str, bitrate: int = BITRATE) -> bool:
 
 
 def running_stacks() -> list[str]:
-    """dimOS stacks on this host (tests replace this)."""
+    """robot stacks on this host (tests replace this)."""
     from kiteos.cli.runs import other_stacks
 
     return [f"{e.source}: {e.detail}" for e in other_stacks(ports=())]
@@ -112,7 +112,7 @@ def running_stacks() -> list[str]:
 @app.command("setup")
 def setup(
     force: Annotated[
-        bool, typer.Option("--force", help="Reconfigure even while a dimOS stack is running (drops both buses).")
+        bool, typer.Option("--force", help="Reconfigure even while a robot stack is running (drops both buses).")
     ] = False,
     station: StationOption = None,
 ) -> None:
@@ -125,11 +125,11 @@ def setup(
     running = running_stacks()
     if running and not force:
         die(
-            "a dimOS stack is running (" + escape(running[0][:120]) + "): `can setup` takes the CAN links DOWN, "
+            "a robot stack is running (" + escape(running[0][:120]) + "): `can setup` takes the CAN links DOWN, "
             "which cuts the motors mid-motion. Stop the stack first (or --force).",
             code=2,
         )
-    root = config.dimos_root_path()
+    root = config.runtime_root_path()
     for side in SIDES:
         port = config.can_port(side)
         if not port:
@@ -141,7 +141,7 @@ def setup(
             console.print(f"[kite]{port}[/kite] ({side} arm) is already up at {BITRATE} bit/s; left alone")
             continue
         console.print(f"Setting up [kite]{port}[/kite] ({side} arm) at {BITRATE} bit/s ...")
-        argv = dimos_argv("hardware", "can", "setup", port, "--bitrate", str(BITRATE))
+        argv = runtime_argv("hardware", "can", "setup", port, "--bitrate", str(BITRATE))
         result = subprocess.run(argv, cwd=root, env=kiteos_env(), check=False)
         if result.returncode != 0:
             die(f"CAN setup failed for {port}", code=1)

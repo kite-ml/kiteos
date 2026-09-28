@@ -20,7 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 INSTALL = DEPLOY / "install.sh"
-BUNDLE = DEPLOY / "dimos" / "dual-collection.bundle"
+BUNDLE = DEPLOY / "runtime" / "kiteos-runtime.bundle"
 CAN_RULES = DEPLOY / "udev" / "80-kiteos-can.rules"
 QUEST_RULES = DEPLOY / "udev" / "70-kiteos-quest.rules"
 MEMLOCK = DEPLOY / "limits" / "99-kiteos-memlock.conf"
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _pin(key: str) -> str:
-    for line in (DEPLOY / "dimos" / "PIN").read_text().splitlines():
+    for line in (DEPLOY / "runtime" / "PIN").read_text().splitlines():
         if line.startswith(f"{key}="):
             return line.split("=", 1)[1].split("#", 1)[0].strip()
     raise KeyError(key)
@@ -137,7 +137,7 @@ def test_help_lists_every_option() -> None:
     assert "Usage: deploy/install.sh" in out
     for flag in (
         "--stack-dir",
-        "--dimos-dir",
+        "--runtime-dir",
         "--extras",
         "--skip-system",
         "--with-udev",
@@ -184,7 +184,7 @@ def test_dry_run_fresh_machine_prints_all_steps_without_side_effects(
     assert result.returncode == 0, result.stdout + result.stderr
     out = result.stdout
     flat = _flat(out)
-    dimos = stack / "dimos"
+    dimos = stack / "kiteos-runtime"
 
     positions = [out.find(f"[{n}/10]") for n in range(1, 11)]
     assert all(p >= 0 for p in positions), positions
@@ -263,7 +263,7 @@ def test_dry_run_leaves_existing_checkout_alone(sandbox: tuple[Path, Path, dict[
     dimos.mkdir(parents=True)
     git = ["git", "-C", str(dimos), "-c", "user.name=KiteOS test", "-c", "user.email=test@kiteos.invalid"]
     subprocess.run([*git, "-c", "init.defaultBranch=main", "init", "-q"], env=env, check=True)
-    (dimos / "README.md").write_text("not dimOS\n")
+    (dimos / "README.md").write_text("not a runtime checkout\n")
     subprocess.run([*git, "add", "README.md"], env=env, check=True)
     subprocess.run([*git, "commit", "-qm", "init"], env=env, check=True)
     (dimos / "README.md").write_text("local edit\n")
@@ -279,6 +279,7 @@ def test_dry_run_leaves_existing_checkout_alone(sandbox: tuple[Path, Path, dict[
     flat = _flat(result.stdout)
     assert f"not the KiteOS pin {PIN_COMMIT}; leaving it as is" in flat
     assert "local modifications" in flat
+    assert "previous folder name" in flat  # <stack>/dimos from before the rename is reused, not recloned
     assert f"fetch {BUNDLE} {PIN_BRANCH}:{PIN_BRANCH}" in flat  # printed as advice only
     assert "git clone" not in flat
     _assert_no_executed_commands(result.stdout)
@@ -291,25 +292,25 @@ def test_dry_run_leaves_existing_checkout_alone(sandbox: tuple[Path, Path, dict[
     assert after == head
 
 
-def test_dry_run_refuses_non_git_dimos_dir(sandbox: tuple[Path, Path, dict[str, str]]) -> None:
+def test_dry_run_refuses_non_git_runtime_dir(sandbox: tuple[Path, Path, dict[str, str]]) -> None:
     home, stack, env = sandbox
-    dimos = stack / "dimos"
-    dimos.mkdir(parents=True)
-    (dimos / "keep.txt").write_text("user data\n")
+    runtime = stack / "kiteos-runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "keep.txt").write_text("user data\n")
 
     result = _run(["--dry-run", "--stack-dir", str(stack)], env=env)
 
     assert result.returncode == 1
     assert "is not a git checkout" in result.stderr
-    assert _tree(stack) == ["dimos", "dimos/keep.txt"]
-    assert (dimos / "keep.txt").read_text() == "user data\n"
+    assert _tree(stack) == ["kiteos-runtime", "kiteos-runtime/keep.txt"]
+    assert (runtime / "keep.txt").read_text() == "user data\n"
     assert _tree(home) == []
 
 
 def test_dry_run_refuses_foreign_staging_dir(sandbox: tuple[Path, Path, dict[str, str]]) -> None:
     """Only a clone the installer left behind may be removed, never other data."""
     home, stack, env = sandbox
-    staging = stack / "dimos.kiteos-staging"
+    staging = stack / "kiteos-runtime.kiteos-staging"
     staging.mkdir(parents=True)
     (staging / "notes.txt").write_text("keep me\n")
 
@@ -385,5 +386,5 @@ def test_memlock_limits_template() -> None:
     (line,) = _rule_lines(MEMLOCK)
     domain, kind, item, value = line.split()
     assert (domain, kind, item) == ("KITEOS_USER", "-", "memlock")
-    # dimOS MemlockConfiguratorLinux needs 64 MiB (value is in KiB).
+    # The runtime's MemlockConfiguratorLinux needs 64 MiB (value is in KiB).
     assert int(value) * 1024 >= 64 * 1024 * 1024

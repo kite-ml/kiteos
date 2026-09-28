@@ -2,7 +2,7 @@
 """Tests for the KiteOS Quest proxy.
 
 Everything runs against in-process aiohttp servers on 127.0.0.1; adb is replaced by a
-fake command runner, so no headset, adb binary or dimOS stack is needed.
+fake command runner, so no headset, adb binary or robot stack is needed.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from kiteos.quest.proxy import (
     vendored,
 )
 
-# Same structure as dimOS dimos/teleop/webxr/web/static/index.html (Apache-2.0) at the
+# Same structure as the runtime's dimos/teleop/webxr/web/static/index.html (Apache-2.0) at the
 # pinned commit; test_branding_matches_pinned_dimos_page checks the real file as well.
 STOCK_INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -91,7 +91,7 @@ def async_test(fn: Callable[..., Coroutine[Any, Any, None]]) -> Callable[..., No
 
 
 # --------------------------------------------------------------------------------------
-# Fake dimOS WebXR server
+# Fake runtime WebXR server
 # --------------------------------------------------------------------------------------
 
 
@@ -220,7 +220,7 @@ def assert_branded(page: str) -> None:
     assert page.index("<body>") < header < page.index('<div id="ui">')
     assert 'src="/kiteos/logo.svg"' in page
     assert 'id="kiteos-status"' in page
-    # dimOS's own page keeps working.
+    # The runtime's own page keeps working.
     for untouched in (
         '<div id="status">Ready to connect</div>',
         '<button id="connectBtn" onclick="connect()">Connect</button>',
@@ -235,17 +235,17 @@ def test_brand_teleop_html_brands_stock_page() -> None:
     assert_branded(branded)
 
 
-def test_branding_matches_pinned_dimos_page() -> None:
-    """Drift check against the real dimOS checkout, when it is importable."""
+def test_branding_matches_pinned_runtime_page() -> None:
+    """Drift check against the real runtime checkout, when it is importable."""
     spec = importlib.util.find_spec("dimos")
     if spec is None or not spec.submodule_search_locations:
-        pytest.skip("dimOS is not installed in this environment")
+        pytest.skip("the runtime is not installed in this environment")
     static = Path(next(iter(spec.submodule_search_locations))) / "teleop/webxr/web/static"
     index = static / "index.html"
     if not index.is_file():
         pytest.skip(f"{index} not found")
     branded = brand_teleop_html(index.read_text())
-    assert branded is not None, "dimOS teleop page changed; update kiteos.quest.proxy branding"
+    assert branded is not None, "the runtime's teleop page changed; update kiteos.quest.proxy branding"
     assert_branded(branded)
     # Every esm.sh module the pinned teleop.js imports must be vendored for the offline Quest.
     script = (static / "teleop.js").read_text()
@@ -564,7 +564,7 @@ async def test_websocket_relays_text_and_binary() -> None:
 
 
 @async_test
-async def test_websocket_close_reason_from_dimos_reaches_headset() -> None:
+async def test_websocket_close_reason_from_runtime_reaches_headset() -> None:
     async with stack() as (client, _):
         ws = await client.ws_connect("/ws-busy")
         msg = await ws.receive(timeout=5)

@@ -55,7 +55,7 @@ MAX_EXTRA_SPHERE_OFFSET_M = 0.3
 MAX_EXTRA_SPHERE_RADIUS_M = 0.2
 MAX_MOUNT_OFFSET_M = 2.0
 # Refused on real hardware (kiteos.safety.coordinator, kiteos.cli.launch): above this the
-# final-stage rate limit no longer bounds anything the dimOS tasks command (teleop 2.0 rad/s).
+# final-stage rate limit no longer bounds anything the runtime tasks command (teleop 2.0 rad/s).
 MAX_REAL_JOINT_SPEED_RAD_S = 3.0
 # Upper bound for max_feedforward_tau_nm (the Damiao adapter adds gravity compensation itself).
 MAX_FEEDFORWARD_TAU_NM = 20.0

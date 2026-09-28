@@ -42,6 +42,8 @@ PlatformKey = Literal["darwin", "linux"]
 SIDES: tuple[Side, ...] = ("left", "right")
 CAMERA_ROLES: tuple[CameraRole, ...] = ("left_wrist", "right_wrist", "top")
 STATION_ENV = "KITEOS_STATION"
+DEFAULT_RUNTIME_ROOT = "~/teleop_stack/kiteos-runtime"
+LEGACY_RUNTIME_KEY = "dimos_root"  # pre-0.1.1 name of runtime_root, still accepted
 ROOT_ENV = "KITEOS_ROOT"
 PLACEHOLDER_MARK = "REPLACE"
 
@@ -129,16 +131,32 @@ class StationConfig(_Model):
     can: dict[Side, PlatformValues]
     cameras: dict[CameraRole, PlatformValues]
     fence: str = "config/fence.yaml"
-    recordings_dir: str = "~/teleop_stack/dimos/recordings"
-    datasets_dir: str = "~/teleop_stack/dimos/datasets"
+    recordings_dir: str = "~/teleop_stack/kiteos-runtime/recordings"
+    datasets_dir: str = "~/teleop_stack/kiteos-runtime/datasets"
     hub: HubConfig
     policy: PolicyConfig = PolicyConfig()
-    dimos_root: str = "~/teleop_stack/dimos"
+    runtime_root: str = DEFAULT_RUNTIME_ROOT
     viser_host: str = "127.0.0.1"
     quest: QuestConfig = QuestConfig()
 
     _source: Path | None = PrivateAttr(default=None)
     _local: Path | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_runtime_key(cls, data: Any) -> Any:
+        """Accept station files written before the rename (``dimos_root`` -> ``runtime_root``)."""
+        if isinstance(data, dict) and LEGACY_RUNTIME_KEY in data:
+            data = dict(data)
+            legacy = data.pop(LEGACY_RUNTIME_KEY)
+            current = data.get("runtime_root")
+            if current is not None and str(current) != str(legacy):
+                raise ValueError(
+                    f"both runtime_root ({current}) and its old name {LEGACY_RUNTIME_KEY} ({legacy}) are set; "
+                    "keep only runtime_root"
+                )
+            data["runtime_root"] = legacy
+        return data
 
     @field_validator("station")
     @classmethod
@@ -280,8 +298,9 @@ class StationConfig(_Model):
     def datasets_path(self) -> Path:
         return self.resolve_path(self.datasets_dir)
 
-    def dimos_root_path(self) -> Path:
-        return self.resolve_path(self.dimos_root)
+    def runtime_root_path(self) -> Path:
+        """The base runtime checkout KiteOS runs in (it holds the virtualenv and the recorder)."""
+        return self.resolve_path(self.runtime_root)
 
     def checkpoint_path(self) -> Path | None:
         return None if not self.policy.checkpoint else self.resolve_path(self.policy.checkpoint)

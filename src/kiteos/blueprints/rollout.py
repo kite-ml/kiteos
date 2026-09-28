@@ -3,7 +3,7 @@
 
 Port of ``kite_rollout/blueprint.py``. Run with::
 
-    dimos run kiteos.dual-openyam-rollout \\
+    kiteos-runtime run kiteos.dual-openyam-rollout \\
         --policy.policy-path <checkpoint> --policy.task "<task>" [--policy.device cuda|mps|cpu] \\
         [--policy.fps 15] --left-wrist.hardware.camera-index <dev> \\
         --right-wrist.hardware.camera-index <dev> --top.hardware.camera-index <dev>
@@ -13,7 +13,7 @@ Port of ``kite_rollout/blueprint.py``. Run with::
 station's camera devices: the built-in defaults are the Kite lab Mac's indices
 (left_wrist 0, top 1, right_wrist 2) and are wrong on any other host. Without CAN
 ports the coordinator drives mock arms. The host must export ``PYTHONPATH`` to
-the KiteOS sources, or install KiteOS editable, so that dimOS's isolated LeRobot
+the KiteOS sources, or install KiteOS editable, so that the runtime's isolated LeRobot
 environment can import ``kiteos.rollout.runtime``.
 
 Control ownership: the joint-trajectory task spans all 14 joints at priority 10,
@@ -62,7 +62,7 @@ ROBOT_TYPE = "dual_openyam"
 # Execution rate at 1x playback; the rate the dataset was recorded at.
 POLICY_FPS = float(CAMERA_FPS)
 # What the joint-trajectory task really executes: every joint (grippers included, in opening/s)
-# moves at most this fast whatever the policy's chunk asks for. dimOS's default, made explicit.
+# moves at most this fast whatever the policy's chunk asks for. The runtime's default, made explicit.
 TRAJECTORY_VELOCITY_LIMIT = 1.0
 
 

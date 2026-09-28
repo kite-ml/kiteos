@@ -3,8 +3,8 @@
 #
 # KiteOS installer for macOS (Apple silicon, Intel) and Linux (Ubuntu/Debian first).
 #
-# Sets up system prerequisites, the pinned dimOS checkout and its virtualenv, the
-# dimOS collection recorder, and installs KiteOS (editable) into the dimOS venv.
+# Sets up system prerequisites, the pinned KiteOS runtime checkout and its virtualenv,
+# the collection recorder, and installs KiteOS (editable) into the runtime virtualenv.
 # Idempotent: each step checks what is already in place. --dry-run prints every
 # step without executing anything. Never touches robot hardware: no CAN traffic,
 # no cameras, no arms. Run as your normal user; it calls sudo where needed.
@@ -29,13 +29,13 @@ DEFAULT_EXTRAS="manipulation learning"
 LFS_ASSET=dual_openyam_abc_box_v2
 RECORDER_CRATE=dimos-memory-recorder
 RECORDER_RESULT_REL=dimos/experimental/memory/rust/result
-PIN_FILE="$REPO_DIR/deploy/dimos/PIN"
+PIN_FILE="$REPO_DIR/deploy/runtime/PIN"
 UDEV_DIR="$REPO_DIR/deploy/udev"
 LIMITS_TEMPLATE="$REPO_DIR/deploy/limits/99-kiteos-memlock.conf"
 UDEV_RULES="80-kiteos-can.rules 70-kiteos-quest.rules"
 LIMITS_DEST=/etc/security/limits.d/99-kiteos-memlock.conf
 
-# Ubuntu/Debian packages: dimOS's own list (scripts/install.sh) plus the recorder
+# Ubuntu/Debian packages: the runtime's own list (scripts/install.sh) plus the recorder
 # build (cmake nasm libsqlite3-dev), CAN (iproute2 can-utils), the Quest (adb) and
 # diagnostics (v4l-utils usbutils).
 APT_PACKAGES="ca-certificates curl git git-lfs g++ build-essential pkg-config portaudio19-dev
@@ -53,21 +53,22 @@ KiteOS installer
 
 Usage: deploy/install.sh [options]
 
-Installs KiteOS and its pinned dimOS runtime on this machine (macOS or Linux).
+Installs KiteOS and its pinned runtime on this machine (macOS or Linux).
 Safe to re-run: every step checks what is already in place. Never touches
 robot hardware (CAN, cameras, arms).
 
 Options:
   --stack-dir DIR    Workspace root (default: ~/teleop_stack)
-  --dimos-dir DIR    dimOS checkout (default: <stack-dir>/dimos). Cloned and
-                     pinned if missing; an existing checkout is only verified.
-  --extras "A B"     dimOS extras for uv sync (default: "$DEFAULT_EXTRAS")
+  --runtime-dir DIR  KiteOS runtime checkout (default: <stack-dir>/kiteos-runtime).
+                     Cloned and pinned if missing; an existing checkout is only
+                     verified.
+  --extras "A B"     runtime extras for uv sync (default: "$DEFAULT_EXTRAS")
   --skip-system      Skip system packages (Homebrew/apt) and Linux group changes
   --with-udev        Linux: install the CAN/Quest udev rules and the memlock
                      limit into /etc (sudo)
-  --no-recorder      Skip Rust and the dimos-memory-recorder build (collection
+  --no-recorder      Skip Rust and the collection recorder build (collection
                      will not work without the recorder)
-  --no-prewarm       Skip pre-building dimOS's isolated LeRobot environment
+  --no-prewarm       Skip pre-building the runtime's isolated LeRobot environment
   --dry-run          Print every step without executing anything
   -h, --help         Show this help
 
@@ -75,11 +76,11 @@ Steps:
    1  system packages (Homebrew on macOS, apt on Ubuntu/Debian)
    2  uv >= $UV_MIN (installs $UV_PIN if missing)
    3  Rust >= $RUST_MIN via rustup (only to build the recorder)
-   4  dimOS source at the KiteOS pin (deploy/dimos/PIN)
-   5  dimOS virtualenv (uv sync --frozen, Python $PYTHON_VERSION)
-   6  collection recorder (cargo build, copied into dimOS)
-   7  KiteOS into the dimOS venv (editable) and station config
-   8  dual OpenYAM model asset and dimOS's isolated LeRobot env
+   4  runtime source at the KiteOS pin (deploy/runtime/PIN)
+   5  runtime virtualenv (uv sync --frozen, Python $PYTHON_VERSION)
+   6  collection recorder (cargo build, copied into the runtime)
+   7  KiteOS into the runtime virtualenv (editable) and station config
+   8  dual OpenYAM model asset and the runtime's isolated LeRobot env
    9  devices: udev rules, groups, CAN names (Linux)
   10  next steps
 
@@ -95,8 +96,9 @@ need_value() {  # need_value OPTION "$#"
 }
 
 STACK_DIR="$HOME/teleop_stack"
-DIMOS_DIR=""
-DIMOS_DIR_SET=0
+RUNTIME_DIR=""
+RUNTIME_DIR_SET=0
+LEGACY_RUNTIME_DIR=0
 EXTRAS=$DEFAULT_EXTRAS
 SKIP_SYSTEM=0
 WITH_UDEV=0
@@ -107,8 +109,9 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --stack-dir) need_value "$1" "$#"; STACK_DIR=$2; shift 2 ;;
         --stack-dir=*) STACK_DIR=${1#*=}; shift ;;
-        --dimos-dir) need_value "$1" "$#"; DIMOS_DIR=$2; DIMOS_DIR_SET=1; shift 2 ;;
-        --dimos-dir=*) DIMOS_DIR=${1#*=}; DIMOS_DIR_SET=1; shift ;;
+        # --dimos-dir: the option's name before the rename, still accepted.
+        --runtime-dir | --dimos-dir) need_value "$1" "$#"; RUNTIME_DIR=$2; RUNTIME_DIR_SET=1; shift 2 ;;
+        --runtime-dir=* | --dimos-dir=*) RUNTIME_DIR=${1#*=}; RUNTIME_DIR_SET=1; shift ;;
         --extras) need_value "$1" "$#"; EXTRAS=$2; shift 2 ;;
         --extras=*) EXTRAS=${1#*=}; shift ;;
         --skip-system) SKIP_SYSTEM=1; shift ;;
@@ -125,12 +128,18 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$STACK_DIR" ] || die "--stack-dir must not be empty"
-[ -n "$DIMOS_DIR" ] || [ "$DIMOS_DIR_SET" = 0 ] || die "--dimos-dir must not be empty"
+[ -n "$RUNTIME_DIR" ] || [ "$RUNTIME_DIR_SET" = 0 ] || die "--runtime-dir must not be empty"
 STACK_DIR=$(expand_path "$STACK_DIR")
-if [ -z "$DIMOS_DIR" ]; then
-    DIMOS_DIR="$STACK_DIR/dimos"
+if [ -z "$RUNTIME_DIR" ]; then
+    RUNTIME_DIR="$STACK_DIR/kiteos-runtime"
+    # Installs made before the rename keep the runtime in <stack-dir>/dimos: reuse it
+    # rather than cloning a second copy.
+    if [ ! -e "$RUNTIME_DIR" ] && [ -d "$STACK_DIR/dimos/.git" ]; then
+        RUNTIME_DIR="$STACK_DIR/dimos"
+        LEGACY_RUNTIME_DIR=1
+    fi
 fi
-DIMOS_DIR=$(expand_path "$DIMOS_DIR")
+RUNTIME_DIR=$(expand_path "$RUNTIME_DIR")
 
 EXTRA_ARGS=()
 set -f
@@ -142,8 +151,8 @@ for extra in $EXTRAS; do
 done
 set +f
 
-VENV_PY="$DIMOS_DIR/.venv/bin/python"
-RECORDER_RESULT="$DIMOS_DIR/$RECORDER_RESULT_REL"
+VENV_PY="$RUNTIME_DIR/.venv/bin/python"
+RECORDER_RESULT="$RUNTIME_DIR/$RECORDER_RESULT_REL"
 RECORDER_BIN="$RECORDER_RESULT/bin/$RECORDER_CRATE"
 DRY=$KITEOS_DRY_RUN
 
@@ -200,7 +209,7 @@ if [ -n "$BREW_PREFIX" ]; then
     PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 fi
 export PATH
-# A caller's active venv or project-env override must not redirect the dimOS venv.
+# A caller's active venv or project-env override must not redirect the runtime virtualenv.
 unset VIRTUAL_ENV UV_PROJECT_ENVIRONMENT
 
 if [ "$(id -u)" -eq 0 ] && [ "${KITEOS_ALLOW_ROOT:-0}" != 1 ]; then
@@ -235,7 +244,7 @@ step_system_macos() {
         if [ "$DRY" = 1 ]; then
             warn "Xcode Command Line Tools missing: a real run stops here (run: xcode-select --install)"
         else
-            die "Xcode Command Line Tools are required (C/C++ compiler for dimOS). Run: xcode-select --install, then re-run"
+            die "Xcode Command Line Tools are required (C/C++ compiler for the runtime). Run: xcode-select --install, then re-run"
         fi
     else
         ok "Xcode Command Line Tools"
@@ -319,7 +328,7 @@ step_system() {
     else
         step_system_linux
     fi
-    # git-lfs is configured per repository in step 8 (as dimOS itself does), so the
+    # git-lfs is configured per repository in step 8 (as the runtime itself does), so the
     # user's global git config is left alone.
     if have git-lfs; then
         ok "git-lfs $(git-lfs version 2>/dev/null | awk '{print $1}' | first_line)"
@@ -401,49 +410,49 @@ step_rust() {
     CARGO_CMD=("${CARGO_HOME:-$HOME/.cargo}/bin/cargo")
 }
 
-git_dimos() {  # read-only git query in the dimOS checkout
-    # GIT_OPTIONAL_LOCKS=0: `git status` must not refresh (write) dimOS's index.
-    GIT_OPTIONAL_LOCKS=0 git -C "$DIMOS_DIR" "$@"
+git_runtime() {  # read-only git query in the runtime checkout
+    # GIT_OPTIONAL_LOCKS=0: `git status` must not refresh (write) the runtime's index.
+    GIT_OPTIONAL_LOCKS=0 git -C "$RUNTIME_DIR" "$@"
 }
 
-step_dimos_source() {
-    step 4 "$TOTAL_STEPS" "dimOS source ($PIN_BRANCH @ $PIN_SHORT)"
-    if [ -e "$DIMOS_DIR/.git" ]; then
+step_runtime_source() {
+    step 4 "$TOTAL_STEPS" "runtime source ($PIN_BRANCH @ $PIN_SHORT)"
+    if [ -e "$RUNTIME_DIR/.git" ]; then
         local head branch dirty
-        head=$(git_dimos rev-parse HEAD 2>/dev/null || true)
-        branch=$(git_dimos rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+        head=$(git_runtime rev-parse HEAD 2>/dev/null || true)
+        branch=$(git_runtime rev-parse --abbrev-ref HEAD 2>/dev/null || true)
         if [ "$head" = "$PIN_COMMIT" ]; then
-            ok "$DIMOS_DIR is at the pin ($branch @ $PIN_SHORT)"
+            ok "$RUNTIME_DIR is at the pin ($branch @ $PIN_SHORT)"
         else
-            warn "$DIMOS_DIR is at ${head:-unknown} (${branch:-?}), not the KiteOS pin $PIN_COMMIT; leaving it as is"
+            warn "$RUNTIME_DIR is at ${head:-unknown} (${branch:-?}), not the KiteOS pin $PIN_COMMIT; leaving it as is"
             info "to move it to the pin (after saving your work):"
-            if git_dimos cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null; then
-                info "  git -C $DIMOS_DIR checkout $PIN_BRANCH   # or: checkout $PIN_COMMIT"
+            if git_runtime cat-file -e "$PIN_COMMIT^{commit}" 2>/dev/null; then
+                info "  git -C $RUNTIME_DIR checkout -B $PIN_BRANCH $PIN_COMMIT"
             else
-                info "  git -C $DIMOS_DIR fetch $PIN_BUNDLE $PIN_BRANCH:$PIN_BRANCH"
-                info "  git -C $DIMOS_DIR checkout $PIN_BRANCH"
+                info "  git -C $RUNTIME_DIR fetch $PIN_BUNDLE $PIN_BRANCH:$PIN_BRANCH"
+                info "  git -C $RUNTIME_DIR checkout $PIN_BRANCH"
             fi
         fi
-        dirty=$(git_dimos status --porcelain --untracked-files=no 2>/dev/null || true)
+        dirty=$(git_runtime status --porcelain --untracked-files=no 2>/dev/null || true)
         if [ -n "$dirty" ]; then
-            warn "$DIMOS_DIR has local modifications to tracked files; KiteOS expects an unmodified dimOS"
+            warn "$RUNTIME_DIR has local modifications to tracked files; KiteOS expects an unmodified runtime"
         fi
-        if [ "$(git_dimos rev-parse --is-shallow-repository 2>/dev/null || echo false)" = true ]; then
-            warn "$DIMOS_DIR is a shallow clone; the KiteOS bundle needs full history (git -C $DIMOS_DIR fetch --unshallow)"
+        if [ "$(git_runtime rev-parse --is-shallow-repository 2>/dev/null || echo false)" = true ]; then
+            warn "$RUNTIME_DIR is a shallow clone; the KiteOS bundle needs full history (git -C $RUNTIME_DIR fetch --unshallow)"
         fi
         return 0
     fi
 
-    if [ -e "$DIMOS_DIR" ] && [ -n "$(ls -A "$DIMOS_DIR" 2>/dev/null || true)" ]; then
-        die "$DIMOS_DIR exists but is not a git checkout. dimOS needs its .git (otherwise it clones upstream main at runtime). Move it aside or pass --dimos-dir"
+    if [ -e "$RUNTIME_DIR" ] && [ -n "$(ls -A "$RUNTIME_DIR" 2>/dev/null || true)" ]; then
+        die "$RUNTIME_DIR exists but is not a git checkout. The runtime needs its .git (otherwise it downloads unpinned code at run time). Move it aside or pass --runtime-dir"
     fi
     [ -r "$PIN_BUNDLE" ] || die "missing $PIN_BUNDLE (the $PIN_BRANCH branch is not on a public remote)"
     have git || [ "$DRY" = 1 ] || die "git is required"
 
     # Clone into a staging directory and move it into place only once HEAD is verified,
     # so an interrupted run never leaves a half-set-up checkout that later runs would trust.
-    local staging="$DIMOS_DIR.kiteos-staging"
-    info "cloning upstream dimOS (full history: the bundle builds on upstream ${PIN_BASE:-main})"
+    local staging="$RUNTIME_DIR.kiteos-staging"
+    info "cloning the runtime source (full history: the bundle builds on upstream ${PIN_BASE:-main})"
     if [ -e "$staging" ]; then
         if [ ! -e "$staging/.git" ] && [ -n "$(ls -A "$staging" 2>/dev/null || true)" ]; then
             die "$staging exists and is not a KiteOS staging clone; move it aside and re-run"
@@ -451,7 +460,7 @@ step_dimos_source() {
         info "removing the incomplete clone left by an earlier run: $staging"
         run rm -rf "$staging"
     fi
-    run mkdir -p "$(dirname "$DIMOS_DIR")"
+    run mkdir -p "$(dirname "$RUNTIME_DIR")"
     run env GIT_LFS_SKIP_SMUDGE=1 git clone "$PIN_UPSTREAM" "$staging"
     run_in "$staging" git bundle verify "$PIN_BUNDLE"
     run_in "$staging" env GIT_LFS_SKIP_SMUDGE=1 git fetch "$PIN_BUNDLE" "$PIN_BRANCH:$PIN_BRANCH"
@@ -460,36 +469,36 @@ step_dimos_source() {
     if [ "$DRY" != 1 ]; then
         local head
         head=$(GIT_OPTIONAL_LOCKS=0 git -C "$staging" rev-parse HEAD)
-        [ "$head" = "$PIN_COMMIT" ] || die "dimOS HEAD is $head after checkout, expected $PIN_COMMIT"
-        ok "dimOS HEAD verified: $PIN_COMMIT"
+        [ "$head" = "$PIN_COMMIT" ] || die "runtime HEAD is $head after checkout, expected $PIN_COMMIT"
+        ok "runtime HEAD verified: $PIN_COMMIT"
     else
         info "verify: git -C $staging rev-parse HEAD == $PIN_COMMIT"
     fi
-    if [ -d "$DIMOS_DIR" ]; then
-        run rmdir "$DIMOS_DIR"  # empty (checked above)
+    if [ -d "$RUNTIME_DIR" ]; then
+        run rmdir "$RUNTIME_DIR"  # empty (checked above)
     fi
-    run mv "$staging" "$DIMOS_DIR"
+    run mv "$staging" "$RUNTIME_DIR"
 }
 
-step_dimos_venv() {
-    step 5 "$TOTAL_STEPS" "dimOS virtualenv (uv sync, Python $PYTHON_VERSION)"
+step_runtime_venv() {
+    step 5 "$TOTAL_STEPS" "runtime virtualenv (uv sync, Python $PYTHON_VERSION)"
     if [ "$PLATFORM" = linux ] && [ "$ARCH" = x86_64 ]; then
         info "Linux x86_64 pulls CUDA torch: expect 10-30 min and ~30-40 GB disk including step 8"
     fi
     if [ "$PLATFORM" = macos ] && [ "$ARCH" = x86_64 ]; then
-        warn "Intel Mac: the pinned dimOS lockfile has no macOS x86_64 torch wheels, so uv sync is expected to fail; use an Apple silicon Mac or Linux"
+        warn "Intel Mac: the pinned runtime lockfile has no macOS x86_64 torch wheels, so uv sync is expected to fail; use an Apple silicon Mac or Linux"
     fi
     info "extras: ${EXTRAS:-(none)}"
     # --inexact keeps packages that are not in the lock (notably the editable KiteOS
     # install from step 7) instead of uninstalling them on re-runs.
-    run_in "$DIMOS_DIR" "$UV_BIN" sync --frozen --inexact --python "$PYTHON_VERSION" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    run_in "$RUNTIME_DIR" "$UV_BIN" sync --frozen --inexact --python "$PYTHON_VERSION" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 }
 
 step_recorder() {
     step 6 "$TOTAL_STEPS" "Collection recorder ($RECORDER_CRATE)"
     if [ "$NO_RECORDER" = 1 ]; then
         skip "--no-recorder"
-        warn "no recorder: 'kiteos collect' cannot record (dimOS would try 'nix build' at startup)"
+        warn "no recorder: 'kiteos collect' cannot record (the runtime would try 'nix build' at startup)"
         return 0
     fi
     if [ -x "$RECORDER_BIN" ]; then
@@ -500,8 +509,8 @@ step_recorder() {
         warn "$RECORDER_RESULT is a symlink (Nix output) without the binary; rebuild it with nix or remove it, then re-run"
         return 0
     fi
-    local target_dir=${CARGO_TARGET_DIR:-$DIMOS_DIR/target}
-    run_in "$DIMOS_DIR" "${CARGO_CMD[@]}" build --release --locked -p "$RECORDER_CRATE"
+    local target_dir=${CARGO_TARGET_DIR:-$RUNTIME_DIR/target}
+    run_in "$RUNTIME_DIR" "${CARGO_CMD[@]}" build --release --locked -p "$RECORDER_CRATE"
     run mkdir -p "$RECORDER_RESULT/bin"
     run cp "$target_dir/release/$RECORDER_CRATE" "$RECORDER_RESULT/bin/$RECORDER_CRATE"
     if [ "$DRY" != 1 ]; then
@@ -513,7 +522,7 @@ step_recorder() {
 KITEOS_LINK="$HOME/.local/bin/kiteos"
 
 step_kiteos() {
-    step 7 "$TOTAL_STEPS" "KiteOS ${KITEOS_VERSION:-} into the dimOS venv (editable)"
+    step 7 "$TOTAL_STEPS" "KiteOS ${KITEOS_VERSION:-} into the runtime virtualenv (editable)"
     run "$UV_BIN" pip install --python "$VENV_PY" --no-deps -e "$REPO_DIR"
     if [ "$DRY" != 1 ]; then
         "$VENV_PY" -c 'import kiteos' || die "KiteOS is not importable from $VENV_PY"
@@ -521,14 +530,14 @@ step_kiteos() {
         names=$("$VENV_PY" -c 'from importlib.metadata import entry_points
 print(" ".join(sorted(e.name for e in entry_points(group="dimos.blueprints") if e.value.startswith("kiteos."))))' || true)
         if [ -n "$names" ]; then
-            ok "dimOS blueprints registered: $names"
+            ok "KiteOS setups registered: $names"
         else
-            warn "no kiteos.* blueprints registered in the dimOS venv"
+            warn "no kiteos.* setups registered in the runtime virtualenv"
         fi
     fi
 
     # Make `kiteos` callable from any shell without activating the venv.
-    local target="$DIMOS_DIR/.venv/bin/kiteos"
+    local target="$RUNTIME_DIR/.venv/bin/kiteos"
     if [ -L "$KITEOS_LINK" ] && [ "$(readlink "$KITEOS_LINK")" = "$target" ]; then
         ok "$KITEOS_LINK -> $target"
     elif [ -e "$KITEOS_LINK" ] || [ -L "$KITEOS_LINK" ]; then
@@ -551,30 +560,30 @@ print(" ".join(sorted(e.name for e in entry_points(group="dimos.blueprints") if 
     if [ -n "${KITEOS_STATION:-}" ]; then
         info "KITEOS_STATION is set: KiteOS will use $KITEOS_STATION"
     fi
-    if [ "$DIMOS_DIR" != "$HOME/teleop_stack/dimos" ]; then
-        info "non-default dimOS location: set 'dimos_root: $DIMOS_DIR' in the station config"
+    if [ "$RUNTIME_DIR" != "$HOME/teleop_stack/kiteos-runtime" ]; then
+        info "non-default runtime location: set 'runtime_root: $RUNTIME_DIR' in the station config"
     fi
 }
 
 step_assets() {
     step 8 "$TOTAL_STEPS" "Dual OpenYAM model asset and LeRobot environment"
-    local tarball="$DIMOS_DIR/data/.lfs/$LFS_ASSET.tar.gz"
-    local extracted="$DIMOS_DIR/data/$LFS_ASSET"
+    local tarball="$RUNTIME_DIR/data/.lfs/$LFS_ASSET.tar.gz"
+    local extracted="$RUNTIME_DIR/data/$LFS_ASSET"
     if [ -f "$extracted/dual_openyam.urdf" ]; then
         ok "model asset present: $extracted"
     else
         if [ "$DRY" != 1 ] && [ ! -e "$tarball" ]; then
-            die "$tarball is not in the dimOS checkout (is $DIMOS_DIR at the pin?)"
+            die "$tarball is not in the runtime checkout (is $RUNTIME_DIR at the pin?)"
         fi
         if [ "$DRY" = 1 ] || is_lfs_pointer "$tarball"; then
-            run_in "$DIMOS_DIR" git lfs install --local --skip-repo
-            # --exclude= overrides lfs.fetchexclude=data/.lfs/* from dimOS's .lfsconfig.
-            run_in "$DIMOS_DIR" git lfs pull --include "data/.lfs/$LFS_ASSET.tar.gz" --exclude=
+            run_in "$RUNTIME_DIR" git lfs install --local --skip-repo
+            # --exclude= overrides lfs.fetchexclude=data/.lfs/* from the runtime's .lfsconfig.
+            run_in "$RUNTIME_DIR" git lfs pull --include "data/.lfs/$LFS_ASSET.tar.gz" --exclude=
         fi
         if [ "$DRY" != 1 ] && is_lfs_pointer "$tarball"; then
             die "git lfs pull left $tarball as a pointer (is lfs.dimensionalos.com reachable?)"
         fi
-        run tar -xzf "$tarball" -C "$DIMOS_DIR/data"
+        run tar -xzf "$tarball" -C "$RUNTIME_DIR/data"
         if [ "$DRY" != 1 ]; then
             [ -f "$extracted/dual_openyam.urdf" ] || die "extracting $tarball did not produce $extracted/dual_openyam.urdf"
             ok "model asset extracted: $extracted"
@@ -585,8 +594,8 @@ step_assets() {
         skip "LeRobot environment pre-warm (--no-prewarm); the first rollout/upload builds it"
         return 0
     fi
-    info "building dimOS's isolated LeRobot environment (one-off, several GB; same command dimOS uses for upload/rollout)"
-    run_in "$DIMOS_DIR" "$VENV_PY" -c 'import subprocess, sys; from dimos.experimental.isolated_python.module import isolated_python_environment as env, isolated_python_run_command as cmd; from dimos.imitation.dataprep.lerobot import lerobot_project; p = lerobot_project(); sys.exit(subprocess.run(cmd(p, "python", "-c", "import lerobot, torch"), cwd=p, env=env(p)).returncode)'
+    info "building the runtime's isolated LeRobot environment (one-off, several GB; same command KiteOS uses for upload/rollout)"
+    run_in "$RUNTIME_DIR" "$VENV_PY" -c 'import subprocess, sys; from dimos.experimental.isolated_python.module import isolated_python_environment as env, isolated_python_run_command as cmd; from dimos.imitation.dataprep.lerobot import lerobot_project; p = lerobot_project(); sys.exit(subprocess.run(cmd(p, "python", "-c", "import lerobot, torch"), cwd=p, env=env(p)).returncode)'
 }
 
 print_can_mapping() {
@@ -678,7 +687,7 @@ step_devices_linux() {
     local glibc
     glibc=$(ldd --version 2>&1 | first_line | awk '{print $NF}' || true)
     if [ -n "$glibc" ] && ! version_ge "$glibc" 2.34; then
-        warn "glibc $glibc < 2.34: dimOS's CAN driver wheels need Ubuntu 22.04+ / Debian 12+"
+        warn "glibc $glibc < 2.34: the runtime's CAN driver wheels need Ubuntu 22.04+ / Debian 12+"
     fi
     print_can_mapping
     info "after every plug or reboot: kiteos can setup   (sudo ip link, 1 Mbit/s)"
@@ -708,14 +717,14 @@ step_next() {
     fi
     cat <<EOF
     1. Open a new terminal$relogin.
-    2. Hugging Face login (uploads): $DIMOS_DIR/.venv/bin/hf auth login
+    2. Hugging Face login (uploads): $RUNTIME_DIR/.venv/bin/hf auth login
     3. Review $REPO_DIR/config/station.yaml and the fence (docs/FENCE.md).
     4. Run:  kiteos doctor
-       (if 'kiteos' is not on PATH: $DIMOS_DIR/.venv/bin/kiteos doctor)
+       (if 'kiteos' is not on PATH: $RUNTIME_DIR/.venv/bin/kiteos doctor)
     Morning checklist: $REPO_DIR/docs/RUNBOOK.md
 
-    Keep the KiteOS install: a plain 'uv sync' in $DIMOS_DIR is exact and
-    uninstalls the editable KiteOS package (and its kiteos.* dimOS blueprints).
+    Keep the KiteOS install: a plain 'uv sync' in $RUNTIME_DIR is exact and
+    uninstalls the editable KiteOS package (and its kiteos.* setups).
     Use 'uv run --no-sync' / 'uv sync --inexact'. To restore it, re-run this
     installer or:
       uv pip install --python $VENV_PY --no-deps -e $REPO_DIR
@@ -727,7 +736,11 @@ EOF
 printf '%sKiteOS installer%s %s\n' "$_K_BOLD" "$_K_OFF" "${KITEOS_VERSION:-}"
 info "platform   $DISTRO_PRETTY ($ARCH)"
 info "stack dir  $STACK_DIR"
-info "dimOS      $DIMOS_DIR  (pin $PIN_BRANCH @ $PIN_SHORT)"
+info "runtime    $RUNTIME_DIR  (pin $PIN_BRANCH @ $PIN_SHORT)"
+if [ "$LEGACY_RUNTIME_DIR" = 1 ]; then
+    info "           (previous folder name; to switch: mv it to $STACK_DIR/kiteos-runtime, leave a symlink"
+    info "            at the old path for the existing virtualenv, and set runtime_root in the station file)"
+fi
 info "KiteOS     $REPO_DIR"
 info "extras     ${EXTRAS:-(none)}"
 if [ "$DRY" = 1 ]; then
@@ -737,8 +750,8 @@ fi
 step_system
 step_uv
 step_rust
-step_dimos_source
-step_dimos_venv
+step_runtime_source
+step_runtime_venv
 step_recorder
 step_kiteos
 step_assets

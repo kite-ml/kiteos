@@ -10,7 +10,7 @@
 3. All converted sessions are merged into ``<datasets>/_hub`` and pushed to the station's Hub
    repository, private unless the station (or ``--public``) says otherwise.
 
-The helper scripts run in dimOS's isolated LeRobot environment.
+The helper scripts run in the runtime's isolated LeRobot environment.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def plan_drops(recording: Path, dataset: Path) -> DropPlan:
 
 
 class IsolatedEnv:
-    """Runs KiteOS helper scripts in dimOS's isolated LeRobot project."""
+    """Runs KiteOS helper scripts in the runtime's isolated LeRobot project."""
 
     def __init__(self) -> None:
         try:
@@ -112,7 +112,7 @@ class IsolatedEnv:
             )
             from dimos.imitation.dataprep.lerobot import lerobot_project
         except ImportError as exc:
-            die(f"dimOS is not importable here ({exc}); run kiteos from the dimOS virtualenv", code=2)
+            die(f"the KiteOS runtime is not importable here ({exc}); run kiteos from the runtime virtualenv (see `kiteos doctor`)", code=2)
         self.project = lerobot_project()
         self._command = isolated_python_run_command
         self.env = kiteos_env(isolated_python_environment(self.project))

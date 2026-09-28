@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
-"""The kiteos CLI: dimOS command building, safety gates, fence/collect/upload/stop helpers, doctor.
+"""The kiteos CLI: runtime command building, safety gates, fence/collect/upload/stop helpers, doctor.
 
-Nothing here touches hardware or launches dimOS: ``launch.execute`` and every subprocess or
+Nothing here touches hardware or launches the runtime: ``launch.execute`` and every subprocess or
 live-stack access is replaced by a fake.
 """
 
@@ -22,6 +22,7 @@ import yaml
 from typer.testing import CliRunner
 
 import kiteos.safety.fence as safety
+from kiteos import __version__
 from kiteos.cli import app, doctor, launch, stop, upload
 from kiteos.cli import fence as fence_cli
 from kiteos.cli._common import STATE, CmdResult, kiteos_pythonpath
@@ -51,17 +52,17 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
     def no_host_commands(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError(f"test tried to run a host command: {args[0] if args else kwargs}")
 
-    # Nothing in these tests may reach the host (dimOS, adb, CAN or camera listing).
+    # Nothing in these tests may reach the host (the runtime, adb, CAN or camera listing).
     monkeypatch.setattr(subprocess, "run", no_host_commands)
     monkeypatch.setattr(os, "execvpe", no_host_commands)
 
 
 @pytest.fixture
 def site(tmp_path: Path) -> Path:
-    """A station in tmp: config/station.yaml + config/fence.yaml, dimOS root, checkpoint, data dirs."""
+    """A station in tmp: config/station.yaml + config/fence.yaml, runtime root, checkpoint, data dirs."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (tmp_path / "dimos").mkdir()
+    (tmp_path / "kiteos-runtime").mkdir()
     (tmp_path / "ckpt").mkdir()
     station = {
         "station": STATION_NAME,
@@ -81,7 +82,7 @@ def site(tmp_path: Path) -> Path:
         "datasets_dir": str(tmp_path / "datasets"),
         "hub": {"repo_id": "kiteml/test-data", "private": True},
         "policy": {"checkpoint": str(tmp_path / "ckpt"), "device": "auto"},
-        "dimos_root": str(tmp_path / "dimos"),
+        "runtime_root": str(tmp_path / "kiteos-runtime"),
     }
     (config_dir / "station.yaml").write_text(yaml.safe_dump(station))
     # Like the shipped lab fence before teaching: no zones, explicitly allowed for teaching.
@@ -115,15 +116,15 @@ def test_mock_command_never_passes_can_ports(site: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr(sys, "platform", "darwin")
     station = load(site)
     fence = station.fence_path()
-    plan = launch.build_dimos_command(station, "collection", real=False, fence_path=fence, environ={})
-    assert plan.argv[:6] == ["uv", "run", "--no-sync", "dimos", "run", "kiteos.dual-openyam-collection"]
+    plan = launch.build_runtime_command(station, "collection", real=False, fence_path=fence, environ={})
+    assert plan.argv[:6] == ["uv", "run", "--no-sync", "kiteos-runtime", "run", "kiteos.dual-openyam-collection"]
     assert not any("can-port" in a for a in plan.argv)
     i = plan.argv.index("--controlcoordinator.fence-path")
     assert plan.argv[i + 1] == str(fence) and Path(plan.argv[i + 1]).is_absolute()
     assert plan.argv[plan.argv.index("--left-wrist.hardware.camera-index") + 1] == "0"
     assert plan.argv[plan.argv.index("--right-wrist.hardware.camera-index") + 1] == "2"
     assert plan.argv[plan.argv.index("--top.hardware.camera-index") + 1] == "1"
-    assert plan.cwd == station.dimos_root_path()
+    assert plan.cwd == station.runtime_root_path()
     assert plan.env["PYTHONPATH"] == str(repo_root() / "src")
     assert any("SIMULATED" in n for n in plan.notes)
     assert not plan.real
@@ -132,7 +133,7 @@ def test_mock_command_never_passes_can_ports(site: Path, monkeypatch: pytest.Mon
 def test_real_command_on_darwin_uses_usb_serials(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     station = load(site)
-    plan = launch.build_dimos_command(station, "teleop", real=True, fence_path=station.fence_path(), environ={})
+    plan = launch.build_runtime_command(station, "teleop", real=True, fence_path=station.fence_path(), environ={})
     argv = plan.argv
     assert argv[argv.index("--controlcoordinator.left-can-port") + 1] == LEFT_SERIAL
     assert argv[argv.index("--controlcoordinator.right-can-port") + 1] == RIGHT_SERIAL
@@ -143,32 +144,32 @@ def test_real_command_on_darwin_uses_usb_serials(site: Path, monkeypatch: pytest
 def test_real_command_on_linux_uses_socketcan_names(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     station = load(site)
-    plan = launch.build_dimos_command(station, "teleop", real=True, fence_path=station.fence_path(), environ={})
+    plan = launch.build_runtime_command(station, "teleop", real=True, fence_path=station.fence_path(), environ={})
     assert plan.argv[plan.argv.index("--controlcoordinator.left-can-port") + 1] == "can_left"
     assert plan.argv[plan.argv.index("--controlcoordinator.right-can-port") + 1] == "can_right"
 
 
 def test_real_command_requires_fence(site: Path) -> None:
     with pytest.raises(launch.LaunchError, match="fence"):
-        launch.build_dimos_command(load(site), "teleop", real=True, fence_path=None)
+        launch.build_runtime_command(load(site), "teleop", real=True, fence_path=None)
 
 
 def test_placeholder_camera_rejected(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     station = load(site)
     with pytest.raises(launch.LaunchError, match="camera top"):
-        launch.build_dimos_command(station, "collection", real=False, fence_path=None)
-    plan = launch.build_dimos_command(station, "collection", real=False, fence_path=None, cameras=False)
+        launch.build_runtime_command(station, "collection", real=False, fence_path=None)
+    plan = launch.build_runtime_command(station, "collection", real=False, fence_path=None, cameras=False)
     assert not any("camera-index" in a for a in plan.argv)
 
 
 def test_viser_host_flag_only_when_exposed(site: Path) -> None:
     station = load(site)
-    plan = launch.build_dimos_command(station, "teleop", real=False, fence_path=None)
+    plan = launch.build_runtime_command(station, "teleop", real=False, fence_path=None)
     assert launch.VISER_FLAG not in plan.argv
     exposed = station.model_copy(update={"viser_host": "0.0.0.0"})
     exposed._source = station.source
-    plan = launch.build_dimos_command(exposed, "teleop", real=False, fence_path=None)
+    plan = launch.build_runtime_command(exposed, "teleop", real=False, fence_path=None)
     assert plan.argv[plan.argv.index(launch.VISER_FLAG) + 1] == "0.0.0.0"
 
 
@@ -196,7 +197,7 @@ def test_extra_flags_and_helpers(site: Path, tmp_path: Path) -> None:
     assert rollout[rollout.index("--policy.fps") + 1] == "15"
     assert rollout[rollout.index("--policy.device") + 1] == "cuda"
     assert rollout[rollout.index("--policy.max-start-jump-rad") + 1] == "0.2"
-    plan = launch.build_dimos_command(load(site), "rollout", real=False, fence_path=None, extra_flags=rollout)
+    plan = launch.build_runtime_command(load(site), "rollout", real=False, fence_path=None, extra_flags=rollout)
     assert plan.argv[5] == "kiteos.dual-openyam-rollout"
     assert plan.argv[-len(rollout) :] == rollout
     assert "PYTHONPATH=" in plan.shell() and "kiteos.dual-openyam-rollout" in plan.shell()
@@ -464,11 +465,11 @@ def test_isolated_scripts_are_standalone() -> None:
 # =========================================================================== stop
 
 
-def test_parse_dimos_status() -> None:
+def test_parse_runtime_status() -> None:
     text = "  Run ID:    abc-123\n  PID:       4242\n  Blueprint: kiteos.dual-openyam-collection\n"
-    running = stop.parse_dimos_status(text)
-    assert running == stop.RunningDimos(4242, "abc-123", "kiteos.dual-openyam-collection")
-    assert stop.parse_dimos_status("No running DimOS instance") is None
+    running = stop.parse_runtime_status(text)
+    assert running == stop.RunningStack(4242, "abc-123", "kiteos.dual-openyam-collection")
+    assert stop.parse_runtime_status("No running DimOS instance") is None
 
 
 class FakeProcess:
@@ -501,7 +502,7 @@ def test_graceful_stop_times_out_without_kill() -> None:
     assert proc.signals.count(signal.SIGTERM) == 1
 
 
-def fake_stacks(monkeypatch: pytest.MonkeyPatch, stacks: list[stop.RunningDimos], unregistered=()) -> list[int]:
+def fake_stacks(monkeypatch: pytest.MonkeyPatch, stacks: list[stop.RunningStack], unregistered=()) -> list[int]:
     monkeypatch.setattr(stop, "find_stacks", lambda: list(stacks))
     monkeypatch.setattr(stop.runs, "stack_processes", lambda: list(unregistered))
     signalled: list[int] = []
@@ -509,9 +510,9 @@ def fake_stacks(monkeypatch: pytest.MonkeyPatch, stacks: list[stop.RunningDimos]
     return signalled
 
 
-REAL_RUN = stop.RunningDimos(4242, "r1", "kiteos.dual-openyam-collection", mock=False, source="KiteOS run")
-UNKNOWN_RUN = stop.RunningDimos(4343, "r2", "kiteos.dual-openyam-teleop", mock=None)
-MOCK_RUN = stop.RunningDimos(4444, "r3", "kiteos.dual-openyam-teleop", mock=True, source="KiteOS run")
+REAL_RUN = stop.RunningStack(4242, "r1", "kiteos.dual-openyam-collection", mock=False, source="KiteOS run")
+UNKNOWN_RUN = stop.RunningStack(4343, "r2", "kiteos.dual-openyam-teleop", mock=None)
+MOCK_RUN = stop.RunningStack(4444, "r3", "kiteos.dual-openyam-teleop", mock=True, source="KiteOS run")
 
 
 def test_plain_stop_asks_for_confirmation_unless_the_run_is_proven_mock(
@@ -570,6 +571,15 @@ def test_find_stacks_merges_kiteos_runs_and_the_registry() -> None:
     table = {150: (100, "/x/python /x/dimos run kiteos.dual-openyam-teleop")}
     found = stop.find_stacks(kiteos_runs=lambda: [state], registry=lambda: [], processes=lambda: table)
     assert [(s.pid, s.related) for s in found] == [(150, (100,))]
+
+
+def test_find_stacks_signals_the_kiteos_runtime_child() -> None:
+    from kiteos.cli.runs import RunState
+
+    state = RunState(pid=400, real=True, blueprint="kiteos.dual-openyam-collection", station="s")
+    table = {401: (400, "/x/.venv/bin/python /x/.venv/bin/kiteos-runtime run kiteos.dual-openyam-collection")}
+    found = stop.find_stacks(kiteos_runs=lambda: [state], registry=lambda: [], processes=lambda: table)
+    assert [(s.pid, s.mock, s.related) for s in found] == [(401, False, (400,))]
 
 
 def test_stop_running_signals_the_chosen_stack(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -938,7 +948,7 @@ class FakeProbe(doctor.Probe):
             return CmdResult(0, "List of devices attached\n1WMHH0000 device\n", "")
         raise AssertionError(f"unexpected command {argv}")
 
-    def dimos(self, *args: str, timeout: float = 120.0) -> CmdResult:
+    def runtime(self, *args: str, timeout: float = 120.0) -> CmdResult:
         self.calls.append(("dimos", *args))
         if args == ("list",):
             return CmdResult(
@@ -953,9 +963,9 @@ class FakeProbe(doctor.Probe):
     def hf_token(self) -> str | None:
         return "hf_test"
 
-    def imported_dimos_root(self) -> Path | None:
+    def imported_runtime_root(self) -> Path | None:
         assert self.station is not None
-        return self.station.dimos_root_path()
+        return self.station.runtime_root_path()
 
     def python_version(self) -> tuple[int, int]:
         return (3, 12)
@@ -979,8 +989,8 @@ def test_doctor_healthy_host(site: Path) -> None:
     checks = run_doctor_with(site)
     by_name = levels(checks)
     assert "FAIL" not in by_name.values(), [c for c in checks if c.level == "FAIL"]
-    assert by_name["blueprints"] == "PASS"
-    assert by_name["dimOS commit"] == "PASS"
+    assert by_name["setups"] == "PASS"
+    assert by_name["runtime commit"] == "PASS"
     assert by_name["FK self-test"] == "PASS"
     assert by_name["CAN left"] == by_name["CAN right"] == "PASS"
     assert by_name["fence zones"] == "WARN"  # no zones enabled (allow_no_zones) in the test fence
@@ -989,13 +999,13 @@ def test_doctor_healthy_host(site: Path) -> None:
 def test_doctor_blocking_failures(site: Path) -> None:
     checks = run_doctor_with(site, blueprints=[], commit="f" * 40, recorder=False, tools={"adb": "/usr/bin/adb"})
     by_name = levels(checks)
-    assert by_name["blueprints"] == "FAIL"
-    assert by_name["dimOS commit"] == "FAIL"
+    assert by_name["setups"] == "FAIL"
+    assert by_name["runtime commit"] == "FAIL"
     assert by_name["recorder"] == "FAIL"
     assert by_name["uv"] == "FAIL"
     fixes = {c.name: c.fix or "" for c in checks}
-    assert "uv pip install --python" in fixes["blueprints"] and "--no-deps -e" in fixes["blueprints"]
-    assert "checkout" in fixes["dimOS commit"]
+    assert "uv pip install --python" in fixes["setups"] and "--no-deps -e" in fixes["setups"]
+    assert "checkout" in fixes["runtime commit"]
 
 
 def test_doctor_hardware_warnings_are_not_blocking(site: Path) -> None:
@@ -1014,10 +1024,10 @@ def test_doctor_linux_can(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             super().__init__(station)
             self.platform = "linux"
 
-        def dimos(self, *args: str, timeout: float = 120.0) -> CmdResult:
+        def runtime(self, *args: str, timeout: float = 120.0) -> CmdResult:
             if args[:3] == ("hardware", "can", "list"):
                 return CmdResult(0, "can_left         UP\ncan_right        DOWN\n", "")
-            return super().dimos(*args, timeout=timeout)
+            return super().runtime(*args, timeout=timeout)
 
         def exists(self, path: Path) -> bool:
             return str(path) != "/dev/v4l/by-path/right" and super().exists(path)
@@ -1052,7 +1062,7 @@ def test_doctor_does_not_count_built_in_or_continuity_cameras(site: Path) -> Non
 def test_doctor_bad_station_fails_fast(tmp_path: Path) -> None:
     checks = doctor.run_doctor(tmp_path / "missing.yaml", FakeProbe)
     assert levels(checks)["station"] == "FAIL"
-    assert "blueprints" not in levels(checks)
+    assert "setups" not in levels(checks)
 
 
 def test_doctor_command_exit_codes(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1069,11 +1079,11 @@ def test_doctor_command_exit_codes(site: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(doctor, "Probe", Broken)
     result = invoke(site, "doctor")
     assert result.exit_code == 1
-    assert "FAIL" in result.output and "blueprints" in result.output
+    assert "FAIL" in result.output and "setups" in result.output
 
 
 def test_doctor_reads_pin() -> None:
-    assert doctor.read_pin(REPO / "deploy" / "dimos" / "PIN") == "3e7cac5dc34bb766617d30486d7d9f1b2d89d93a"
+    assert doctor.read_pin(REPO / "deploy" / "runtime" / "PIN") == "3e7cac5dc34bb766617d30486d7d9f1b2d89d93a"
 
 
 # =========================================================================== CLI surface
@@ -1111,7 +1121,7 @@ def test_help_lists_every_command() -> None:
 def test_banner_and_version(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KITEOS_NO_BANNER")
     result = runner.invoke(app, ["--version"])
-    assert result.exit_code == 0 and "KiteOS 0.1.0" in result.output
+    assert result.exit_code == 0 and f"KiteOS {__version__}" in result.output
     result = runner.invoke(app, ["fence", "validate", "--fence", str(REPO / "config" / "fence.yaml")])
     assert result.output.startswith("KiteOS")
 
@@ -1156,7 +1166,7 @@ class FakeCollectionSession:
         self.closed = True
 
 
-@pytest.mark.dimos
+@pytest.mark.runtime
 def test_collection_tui_keys(tmp_path: Path) -> None:
     import asyncio
 
@@ -1224,7 +1234,7 @@ def test_mock_plan_uses_a_private_bus_free_ports_and_pins_safety_flags(site: Pat
     from kiteos.cli import runs
 
     bus = runs.random_private_bus()
-    plan = launch.build_dimos_command(
+    plan = launch.build_runtime_command(
         load(site), "teleop", real=False, fence_path=None, environ={}, private_bus=bus, ports=(50001, 50002)
     )
     assert plan.env["LCM_DEFAULT_URL"] == bus["LCM_DEFAULT_URL"] and ":7667" not in bus["LCM_DEFAULT_URL"]
@@ -1237,8 +1247,8 @@ def test_mock_plan_uses_a_private_bus_free_ports_and_pins_safety_flags(site: Pat
     assert argv[argv.index("--controlcoordinator.require-fence-on-hardware") + 1] == "true"
     assert "LCM_DEFAULT_URL=" in plan.shell()
     with pytest.raises(launch.LaunchError, match="private"):
-        launch.build_dimos_command(load(site), "teleop", real=True, fence_path=site, environ={}, private_bus=bus)
-    real = launch.build_dimos_command(load(site), "teleop", real=True, fence_path=site, environ={})
+        launch.build_runtime_command(load(site), "teleop", real=True, fence_path=site, environ={}, private_bus=bus)
+    real = launch.build_runtime_command(load(site), "teleop", real=True, fence_path=site, environ={})
     assert real.argv[real.argv.index("--controlcoordinator.expect-mock") + 1] == "false"
     assert not real.private_bus and "LCM_DEFAULT_URL" not in real.env
 
@@ -1297,7 +1307,7 @@ def test_real_launch_refuses_traffic_on_the_target_bus(
     assert invoke(site, "teleop").exit_code == 0  # a mock run never listens on the station bus
 
 
-def test_launch_refuses_dimos_settings_that_bypass_the_station(
+def test_launch_refuses_runtime_settings_that_bypass_the_station(
     site: Path, executed: list[launch.LaunchPlan], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Review: CONTROLCOORDINATOR__*_CAN_PORT in the environment powered REAL arms in a mock run."""
@@ -1305,7 +1315,7 @@ def test_launch_refuses_dimos_settings_that_bypass_the_station(
     result = invoke(site, "teleop")
     assert result.exit_code == 2 and "CONTROLCOORDINATOR__LEFT_CAN_PORT" in result.output and executed == []
     monkeypatch.delenv("CONTROLCOORDINATOR__LEFT_CAN_PORT")
-    dotenv = site.parent.parent / "dimos" / ".env"
+    dotenv = site.parent.parent / "kiteos-runtime" / ".env"
     dotenv.write_text("export CONTROLCOORDINATOR__REQUIRE_FENCE_ON_HARDWARE=false\nOTHER=1\n")
     result = invoke(site, "teleop")
     assert result.exit_code == 2 and "REQUIRE_FENCE_ON_HARDWARE" in result.output
@@ -1464,6 +1474,32 @@ def test_stack_process_scan_patterns() -> None:
     assert [pid for pid, _ in runs.stack_processes(ps, exclude=[102])] == [101, 103, 104, 107]
 
 
+def test_stack_process_scan_finds_kiteos_runtime_launches() -> None:
+    """KiteOS launches through `kiteos-runtime`; the scan must see those stacks as well as `dimos run`."""
+    from kiteos.cli import runs
+
+    ps = "\n".join(
+        [
+            "  201 uv run --no-sync kiteos-runtime run kiteos.dual-openyam-teleop --viewer none",
+            "  202 /x/kiteos-runtime/.venv/bin/python /x/kiteos-runtime/.venv/bin/kiteos-runtime run kiteos.dual-openyam-collection",
+            "  203 uv run --no-sync kiteos-runtime imitation rollout",
+            "  204 /x/python3 -c from multiprocessing.forkserver import main; main(60, 62, ['__main__'], **{'sys_path': ['/x/kiteos-runtime/.venv/lib']})",
+            "  205 /usr/bin/less kiteos-runtime-notes.txt",
+        ]
+    )
+    assert [pid for pid, _ in runs.stack_processes(ps)] == [201, 202, 204]
+
+
+def test_run_state_stays_alive_while_kiteos_runtime_runs(tmp_path: Path) -> None:
+    from kiteos.cli import runs
+
+    state = runs.RunState(pid=21, real=False, blueprint="kiteos.dual-openyam-teleop", station="s", private_bus=True)
+    runs.write_run_state(state, tmp_path)
+    commands = {21: "uv run --no-sync kiteos-runtime run kiteos.dual-openyam-teleop"}
+    found = runs.alive_run_states(tmp_path, alive=lambda pid: pid == 21, command=commands.get)
+    assert [s.pid for s in found] == [21]
+
+
 def test_run_state_files_round_trip_and_stale_ones_are_removed(tmp_path: Path) -> None:
     from kiteos.cli import runs
 
@@ -1509,7 +1545,7 @@ def test_other_stacks_collects_every_source() -> None:
         processes=lambda: [(2, "python -m kite_rollout.run --real")],
         listening=lambda port: port == 8443,
     )
-    assert [e.source for e in evidence] == ["dimOS registry", "process", "port"]
+    assert [e.source for e in evidence] == ["runtime registry", "process", "port"]
 
 
 def test_quest_proxy_follows_a_mock_run_on_its_own_port(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:

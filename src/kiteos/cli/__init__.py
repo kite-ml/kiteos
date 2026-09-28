@@ -2,8 +2,9 @@
 """The ``kiteos`` command line.
 
 Every command reads the station file (``--station PATH``, ``$KITEOS_STATION`` or
-``config/station.yaml``) and runs dimOS from the station's checkout with
-``uv run --no-sync`` and ``PYTHONPATH=<repo>/src``. Heavy imports (dimOS, textual, OpenCV)
+``config/station.yaml``) and runs the runtime from the station's checkout with
+``uv run --no-sync kiteos-runtime`` and ``PYTHONPATH=<repo>/src``. ``kiteos list`` and
+``kiteos run`` reach every setup the runtime ships, for every embodiment. Heavy imports (the runtime, textual, OpenCV)
 happen inside the commands that need them, so ``kiteos --help`` and the offline commands stay fast.
 """
 
@@ -16,7 +17,7 @@ from typing import Annotated, Optional
 import typer
 
 from kiteos import __version__, brand
-from kiteos.cli import cameras, can, collect, doctor, evaluate, fence, quest, rollout, stop, teleop, upload
+from kiteos.cli import cameras, can, collect, doctor, evaluate, fence, quest, rollout, setups, stop, teleop, upload
 from kiteos.cli._common import STATE, console, print_banner
 
 NO_BANNER_ENV = "KITEOS_NO_BANNER"
@@ -59,6 +60,9 @@ def _root(
 
 
 app.command("doctor")(doctor.doctor)
+app.command("list")(setups.list_setups)
+app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(setups.run_setup)
+app.command("status")(setups.status)
 app.command("teleop")(teleop.teleop)
 app.add_typer(collect.app, name="collect")
 app.add_typer(rollout.app, name="rollout")

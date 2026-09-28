@@ -2,7 +2,7 @@
 """Pure-numpy forward kinematics for the dual OpenYAM arms.
 
 The per-arm chain is parsed from the vendored URDF ``kiteos/data/dual_openyam.urdf`` (a copy of
-dimOS ``data/dual_openyam_abc_box_v2/dual_openyam.urdf``). Every joint contributes
+the runtime ``data/dual_openyam_abc_box_v2/dual_openyam.urdf``). Every joint contributes
 
     T_child = T_parent @ Trans(xyz) @ Rz(yaw) @ Ry(pitch) @ Rx(roll) @ AxisAngle(axis, q)
 
@@ -13,7 +13,7 @@ the left arm, +z up, z = 0 at the base mounting surface. Each arm base is placed
 mount transform. The URDF mounts the bases at (0, +0.31, 0) and (0, -0.31, 0); that spacing comes
 from a simulation scene, so callers can pass measured mounts instead.
 
-This module must not import dimOS or pinocchio: it runs inside the control tick.
+This module must not import the runtime or pinocchio: it runs inside the control tick.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ ARM_JOINTS: dict[str, list[str]] = {
 ARM_JOINT_NAMES: list[str] = [*ARM_JOINTS["left"], *ARM_JOINTS["right"]]
 GRIPPER_JOINTS: dict[str, str] = {"left": "left_arm/gripper", "right": "right_arm/gripper"}
 # Must stay identical to dimos.robot.manipulators.dual_openyam.joints.DUAL_OPENYAM_JOINTS
-# (asserted by tests); redefined here so the safety core never imports dimOS.
+# (asserted by tests); redefined here so the safety core never imports the runtime.
 DUAL_OPENYAM_JOINTS: list[str] = [*ARM_JOINT_NAMES, GRIPPER_JOINTS["left"], GRIPPER_JOINTS["right"]]
 
 WORLD_FRAME = "dual_openyam_base"

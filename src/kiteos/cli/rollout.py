@@ -21,7 +21,7 @@ from kiteos.cli._common import (
     attach_to_run,
     console,
     die,
-    dimos_argv,
+    runtime_argv,
     kiteos_env,
     load_station,
     note,
@@ -74,10 +74,10 @@ def start(
     session: Annotated[
         Optional[str], typer.Option("--session", help="With --record: session prefix (default: rollout-<station prefix>).")
     ] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the dimOS command and exit.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the runtime command and exit.")] = False,
     allow_concurrent: Annotated[
         bool,
-        typer.Option("--allow-concurrent", help="MOCK only: start even if another dimOS stack runs on this host."),
+        typer.Option("--allow-concurrent", help="MOCK only: start even if another robot stack runs on this host."),
     ] = False,
     station_ports: Annotated[
         bool, typer.Option("--station-ports", help="MOCK only: use the station's WebXR/viser ports.")
@@ -146,11 +146,11 @@ def controls(station: StationOption = None) -> None:
         from dimos.imitation.tui import RolloutApp, RolloutSession
         from dimos.porcelain.dimos import Dimos
     except ImportError:
-        # Not in the dimOS venv: fall back to dimOS's own controls (unbranded).
+        # Not in the runtime venv: fall back to the runtime's own controls (unbranded).
         import os
 
-        argv = dimos_argv("imitation", "rollout")
-        os.chdir(config.dimos_root_path())
+        argv = runtime_argv("imitation", "rollout")
+        os.chdir(config.runtime_root_path())
         os.execvpe(argv[0], argv, kiteos_env())
 
     class KiteRolloutApp(RolloutApp):

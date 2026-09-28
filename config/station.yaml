@@ -23,8 +23,8 @@ cameras:
   top:         {darwin: 1, linux: /dev/v4l/by-path/REPLACE-top-video-index0}
 
 fence: config/fence.yaml           # keep-out zones; required for --real
-recordings_dir: ~/teleop_stack/dimos/recordings
-datasets_dir: ~/teleop_stack/dimos/datasets
+recordings_dir: ~/teleop_stack/kiteos-runtime/recordings
+datasets_dir: ~/teleop_stack/kiteos-runtime/datasets
 
 hub:
   repo_id: kiteml/dual-openyam-close-box
@@ -34,7 +34,7 @@ policy:
   checkpoint: ~/teleop_stack/policies/act-close-box-step30000
   device: auto                     # auto -> cuda | mps | cpu
 
-dimos_root: ~/teleop_stack/dimos
+runtime_root: ~/teleop_stack/kiteos-runtime
 viser_host: 127.0.0.1              # 0.0.0.0 exposes the viewer (and arm control) to the LAN
 
 quest:

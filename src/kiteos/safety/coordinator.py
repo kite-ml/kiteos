@@ -1,5 +1,5 @@
 # Copyright 2026 Kite ML.
-"""KiteOS Dual OpenYAM coordinator: dimOS's ``DualOpenYamCoordinator`` behind the safety fence.
+"""KiteOS Dual OpenYAM coordinator: the runtime's ``DualOpenYamCoordinator`` behind the safety fence.
 
 ``KiteDualOpenYamCoordinator`` wraps the whole-body adapter in ``FencedWholeBodyAdapter`` (the only
 point every command source passes through) and closes the gaps the fence cannot close alone:
@@ -9,8 +9,8 @@ point every command source passes through) and closes the gaps the fence cannot 
   ``mode: monitor`` or with implausible rate/sweep settings; refuses any real adapter at all when
   started with ``expect_mock`` (the KiteOS CLI sets it for every run without ``--real``);
 * rewrites ``applied_joint_position_command`` so recorded actions are what the fence applied; the
-  hook is installed on the output port before dimOS creates its tick loop, so no sample escapes;
-* ``set_estop`` latches the fence and cancels the executing trajectory (dimOS's trajectory task
+  hook is installed on the output port before the runtime creates its tick loop, so no sample escapes;
+* ``set_estop`` latches the fence and cancels the executing trajectory (the runtime's trajectory task
   ignores E-STOP); ``execute_trajectory`` and ``task_invoke`` on a trajectory task's ``execute`` /
   ``on_joint_command`` reject trajectories that would cross the fence (a trajectory that starts
   inside the margin passes only if it backs straight out and ends clear);
@@ -18,7 +18,7 @@ point every command source passes through) and closes the gaps the fence cannot 
   arrive on the tick thread under the coordinator's non re-entrant hardware lock, where calling
   RPCs would deadlock, so the event handler only records and signals.
 
-Runs inside a dimOS forkserver worker: the class is pickled by reference and this module is
+Runs inside a runtime forkserver worker: the class is pickled by reference and this module is
 imported there, so it has no import-time side effects beyond defining classes.
 """
 
@@ -90,7 +90,7 @@ class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig):
     fence_path: str | None = None
     require_fence_on_hardware: bool = True
     # Set by the KiteOS CLI for every run without --real: refuse to build any real adapter, even
-    # if CAN ports arrive through the environment, a dimOS config file or a .env file.
+    # if CAN ports arrive through the environment, the runtime's config file or a .env file.
     expect_mock: bool = False
 
 
@@ -122,7 +122,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
     # ------------------------------------------------------------------ hardware
 
     def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
-        """Create dimOS's adapter for ``component`` and wrap it in the fence.
+        """Create the runtime's adapter for ``component`` and wrap it in the fence.
 
         The fence file is validated before the inner adapter exists, so a refusal never
         constructs a hardware adapter.
@@ -130,9 +130,9 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
         real = component.adapter_type != MOCK_ADAPTER_TYPE
         if real and self.config.expect_mock:
             raise RuntimeError(
-                "KiteOS was started for MOCK arms (no --real), but dimOS resolved the real "
+                "KiteOS was started for MOCK arms (no --real), but the runtime resolved the real "
                 f"'{component.adapter_type}' adapter: CAN ports came from the environment "
-                "(CONTROLCOORDINATOR__*), ~/.config/dimos/config or the dimOS .env file. "
+                "(CONTROLCOORDINATOR__*), ~/.config/dimos/config or the runtime .env file. "
                 "Refusing to power the arms. Remove those settings; use --real to drive the "
                 "real arms."
             )
@@ -184,12 +184,12 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
 
     @rpc
     def start(self) -> None:
-        """Hook the applied-command publisher, start dimOS's coordinator and the supervisor.
+        """Hook the applied-command publisher, start the runtime's coordinator and the supervisor.
 
-        The rewrite is installed on the ``applied_joint_position_command`` port before dimOS
+        The rewrite is installed on the ``applied_joint_position_command`` port before the runtime
         builds its tick loop (which captures ``port.publish``), so not even the first tick can
         publish a pre-fence target. ``_wrap_applied_publisher`` then verifies the tick loop really
-        uses it (and wraps the tick loop's callback as a fallback if a dimOS change bypassed it).
+        uses it (and wraps the tick loop's callback as a fallback if a runtime change bypassed it).
         """
         was_running = self._tick_loop is not None and self._tick_loop.is_running
         self._start_fence_supervisor()
@@ -235,7 +235,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
         current = getattr(port, "publish", None)
         if port is None or not callable(current):
             raise RuntimeError(
-                "KiteOS cannot hook dimOS's applied_joint_position_command port (has the dimOS "
+                "KiteOS cannot hook the runtime's applied_joint_position_command port (has the runtime "
                 "pin changed?). Refusing to run: recorded actions would not match what the fence "
                 "applied."
             )
@@ -245,20 +245,20 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
 
     def _wrap_applied_publisher(self) -> None:
         tick_loop = self._tick_loop
-        # Private dimOS attribute (pinned commit); fail loudly rather than record pre-fence actions.
+        # Private the runtime attribute (pinned commit); fail loudly rather than record pre-fence actions.
         if tick_loop is None or not hasattr(tick_loop, "_publish_command_callback"):
             if tick_loop is not None:
                 tick_loop.stop()
             raise RuntimeError(
-                "KiteOS cannot hook dimOS's applied-command publisher "
-                "(TickLoop._publish_command_callback is missing; has the dimOS pin changed?). "
+                "KiteOS cannot hook the runtime's applied-command publisher "
+                "(TickLoop._publish_command_callback is missing; has the runtime pin changed?). "
                 "Refusing to run: recorded actions would not match what the fence applied."
             )
         original: Callable[[JointState], None] | None = tick_loop._publish_command_callback
         if original is None or getattr(original, "_kiteos_fenced", False):
             return
         logger.warning(
-            "KiteOS: dimOS's tick loop did not pick up the fenced applied-command publisher; "
+            "KiteOS: the runtime's tick loop did not pick up the fenced applied-command publisher; "
             "wrapping its callback after start (the first ticks may have been recorded unfenced)"
         )
         tick_loop._publish_command_callback = self._fenced_publisher(original)
@@ -267,7 +267,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
-        """Latch the fence (arms hold), cancel any trajectory, then latch dimOS's tasks."""
+        """Latch the fence (arms hold), cancel any trajectory, then latch the runtime's tasks."""
         for fenced in list(self._fenced.values()):
             fenced.latch_estop(estopped)
         if estopped:
@@ -291,12 +291,12 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
     def task_invoke(
         self, task_name: str, method: str, kwargs: dict[str, Any] | None = None
     ) -> Any:
-        """dimOS ``task_invoke`` with the trajectory precheck on motion-starting commands.
+        """the runtime ``task_invoke`` with the trajectory precheck on motion-starting commands.
 
         ``task_invoke("joint_trajectory", "execute", {"trajectory": ...})`` (a declared command)
         and ``on_joint_command`` on any trajectory task start motion exactly like
         ``execute_trajectory``, so they get the same E-STOP and fence precheck. Everything else is
-        dimOS's ``task_invoke`` unchanged; the adapter still fences every tick regardless.
+        the runtime's ``task_invoke`` unchanged; the adapter still fences every tick regardless.
         """
         task = self._tasks.get(task_name)
         if isinstance(task, JointTrajectoryTask) and method in _PRECHECKED_TASK_COMMANDS:
@@ -338,7 +338,7 @@ class KiteDualOpenYamCoordinator(DualOpenYamCoordinator):
                 f"KiteOS fence could not read the trajectory: {exc!r}",
             )
         if not names or not points:
-            return None  # structurally invalid; dimOS rejects it with its own message
+            return None  # structurally invalid; the runtime rejects it with its own message
         for adapter in fenced:
             report = adapter.check_waypoints(names, points)
             if not report.ok:

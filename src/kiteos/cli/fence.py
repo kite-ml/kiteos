@@ -325,7 +325,7 @@ def connect_live() -> LiveStack:
     try:
         return LiveStack()
     except ImportError as exc:
-        die(f"dimOS is not importable here ({exc}); run kiteos from the dimOS virtualenv", code=2)
+        die(f"the KiteOS runtime is not importable here ({exc}); run kiteos from the runtime virtualenv (see `kiteos doctor`)", code=2)
     except Exception as exc:
         die(f"cannot reach the running stack ({exc}); start it with `kiteos teleop|collect start|rollout start`")
 
@@ -818,7 +818,7 @@ def iter_dataset(root: Path) -> Iterator[tuple[int, int, np.ndarray | None, np.n
     """(episode, frame, state14, action14) for every frame of a LeRobot v3 dataset, in order."""
     try:
         import pyarrow.parquet as pq
-    except ImportError as exc:  # pragma: no cover - pyarrow ships with dimOS
+    except ImportError as exc:  # pragma: no cover - pyarrow ships with the runtime
         raise RuntimeError(f"reading datasets needs pyarrow ({exc})") from exc
 
     info_path = root / "meta" / "info.json"

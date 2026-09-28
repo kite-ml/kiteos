@@ -6,7 +6,7 @@ compares the predicted action with the action the operator actually commanded. W
 ``summary.json`` (per-episode MAE and motion range per joint group, timing) and
 ``traces.json`` (predicted and true actions).
 
-Runs in dimOS's isolated LeRobot env (see ``kiteos eval offline``).
+Runs in the runtime's isolated LeRobot env (see ``kiteos eval offline``).
 Usage: eval_policy.py CHECKPOINT_DIR DATASET_ROOT EPISODES(comma list) OUT_DIR DEVICE [MAX_FRAMES]
 DEVICE is auto (cuda > mps > cpu), cuda, mps or cpu.
 """

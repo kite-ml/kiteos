@@ -3,7 +3,7 @@
 
 Used by ``kiteos upload`` when episodes were marked for deletion (U in
 ``kiteos collect controls``) after the session had already been converted. Indices are the
-dataset's own episode indices. Runs in dimOS's isolated LeRobot env.
+dataset's own episode indices. Runs in the runtime's isolated LeRobot env.
 Usage: drop_episodes.py DATASET_ROOT INDEX...
 """
 
@@ -34,7 +34,7 @@ def main(root: Path, indices: list[int]) -> int:
         print("[kiteos] refusing to remove every episode of the session", flush=True)
         return 1
     kept = delete_episodes(dataset, episode_indices=wanted, output_dir=tmp, repo_id=repo_id)
-    # delete_episodes writes a fresh dataset; carry over the KiteOS/dimOS side files.
+    # delete_episodes writes a fresh dataset; carry over the KiteOS/the runtime side files.
     for name in KEEP_FILES:
         if (root / name).exists() and not (tmp / name).exists():
             shutil.copy2(root / name, tmp / name)

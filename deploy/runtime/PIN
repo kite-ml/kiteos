@@ -1,6 +1,6 @@
-# dimOS source pinned for this KiteOS release
+# Base runtime source pinned for this KiteOS release
 upstream=https://github.com/dimensionalOS/dimos.git
-branch=dual-collection
+branch=kiteos-runtime
 commit=3e7cac5dc34bb766617d30486d7d9f1b2d89d93a
 base=c1c3cdc9d2ee54ca72259465688395699d7d99a2   # upstream main commit the bundle builds on
-bundle=deploy/dimos/dual-collection.bundle
+bundle=deploy/runtime/kiteos-runtime.bundle

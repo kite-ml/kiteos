@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
 """Convert one KiteOS recording to a LeRobot dataset without the slow quality pre-check.
 
-- Discarded takes are excluded (as in ``dimos imitation prepare``).
+- Discarded takes are excluded (as in the runtime's ``imitation prepare``).
 - Saved episodes listed in the recording's ``deleted_episodes.txt`` (U in
   ``kiteos collect controls``; 0-based saved-episode indices) are dropped. The indices actually
   applied are written to ``<output>/kiteos_deleted_episodes.txt`` so later deletions can be
@@ -11,7 +11,7 @@
 - The per-episode pre-check is skipped, so a broken episode fails while writing instead of
   being rejected up front.
 
-Runs in dimOS's isolated LeRobot env (see ``kiteos upload``).
+Runs in the runtime's isolated LeRobot env (see ``kiteos upload``).
 Usage: fast_prepare.py RECORDING_DIR OUTPUT_DIR
 """
 
@@ -34,10 +34,10 @@ def _read_indices(path: Path) -> set[int]:
 
 
 def main(recording: Path, output: Path) -> int:
-    # These two dataprep internals are replaced below; fail loudly if dimOS renamed them.
+    # These two dataprep internals are replaced below; fail loudly if the runtime renamed them.
     for name in ("extract_episodes", "inspect_episode_quality", "run_dataprep"):
         if not hasattr(build, name):
-            print(f"[kiteos] dimOS dataprep has no build.{name}; update fast_prepare.py", flush=True)
+            print(f"[kiteos] the runtime dataprep has no build.{name}; update fast_prepare.py", flush=True)
             return 3
 
     deleted = _read_indices(recording / DELETED_FILE)

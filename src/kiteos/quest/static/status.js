@@ -1,6 +1,6 @@
 // Copyright 2026 Kite ML.
 // KiteOS status pill for the Quest teleop page. It polls the proxy's /kiteos/api/status
-// and only touches its own #kiteos-status element, so nothing here can affect dimOS's
+// and only touches its own #kiteos-status element, so nothing here can affect the stock page's
 // teleop.js (which owns #status, the buttons and the WebXR session).
 (function () {
     'use strict';

@@ -38,6 +38,8 @@ LEVEL_STYLE: dict[str, str] = {"PASS": "ok", "WARN": "warn", "FAIL": "fail", "IN
 
 # file=None makes rich resolve sys.stdout at write time (so CliRunner captures output).
 console = Console(theme=THEME, highlight=False)
+# The banner goes to stderr, so machine-readable output (`kiteos list --json`) stays clean.
+banner_console = Console(theme=THEME, highlight=False, stderr=True)
 
 StationOption = Annotated[
     Optional[Path],
@@ -61,9 +63,9 @@ STATE = _State()
 
 def print_banner(compact: bool = True) -> None:
     if compact:
-        console.print(f"[kite]{brand.BRAND_NAME}[/kite] [muted]{__version__} · {brand.TAGLINE}[/muted]")
+        banner_console.print(f"[kite]{brand.BRAND_NAME}[/kite] [muted]{__version__} · {brand.TAGLINE}[/muted]")
     else:
-        console.print(f"[kite]{brand.banner(__version__)}[/kite]")
+        banner_console.print(f"[kite]{brand.banner(__version__)}[/kite]")
 
 
 def die(message: str, code: int = 1) -> NoReturn:
@@ -114,7 +116,7 @@ def confirm_typed(expected: str, message: str) -> bool:
 
 
 def kiteos_pythonpath(environ: Mapping[str, str] | None = None, repo: Path | None = None) -> str:
-    """PYTHONPATH with ``<repo>/src`` first, so dimOS workers and the isolated env import KiteOS."""
+    """PYTHONPATH with ``<repo>/src`` first, so the runtime workers and the isolated env import KiteOS."""
     environ = os.environ if environ is None else environ
     src = str((repo or repo_root()) / "src")
     existing = [p for p in environ.get("PYTHONPATH", "").split(os.pathsep) if p and p != src]
@@ -169,28 +171,31 @@ def run_capture(
     return CmdResult(proc.returncode, proc.stdout or "", proc.stderr or "")
 
 
-def dimos_argv(*args: str) -> list[str]:
-    """``uv run --no-sync dimos ...`` (never a plain ``uv run``: it would uninstall KiteOS)."""
-    return ["uv", "run", "--no-sync", "dimos", *args]
+RUNTIME_COMMAND = "kiteos-runtime"  # console script of this package, installed in the runtime virtualenv
 
 
-def run_dimos(station: StationConfig, *args: str, timeout: float = 120.0) -> CmdResult:
-    """Run a dimOS CLI command in the station's dimOS checkout and capture its output."""
-    root = station.dimos_root_path()
+def runtime_argv(*args: str) -> list[str]:
+    """``uv run --no-sync kiteos-runtime ...`` (never a plain ``uv run``: it would uninstall KiteOS)."""
+    return ["uv", "run", "--no-sync", RUNTIME_COMMAND, *args]
+
+
+def run_runtime(station: StationConfig, *args: str, timeout: float = 120.0) -> CmdResult:
+    """Run a runtime CLI command in the station's runtime checkout and capture its output."""
+    root = station.runtime_root_path()
     if not root.is_dir():
-        return CmdResult(2, "", f"dimOS checkout not found at {root}")
-    return run_capture(dimos_argv(*args), cwd=root, env=kiteos_env(), timeout=timeout)
+        return CmdResult(2, "", f"runtime checkout not found at {root}")
+    return run_capture(runtime_argv(*args), cwd=root, env=kiteos_env(), timeout=timeout)
 
 
 def attach_to_run(purpose: str) -> RunState | None:
-    """Join the bus of the running KiteOS stack (from its run-state file) before importing dimOS.
+    """Join the bus of the running KiteOS stack (from its run-state file) before importing the runtime.
 
     Mock runs use a private bus, so a client must use the same ``LCM_DEFAULT_URL`` /
     ``ZENOH_SCOUT_ADDR`` as the stack. Refuses when several KiteOS runs are alive (a call could
-    reach the wrong one). With no KiteOS run, this shell's settings (normally dimOS's default bus)
+    reach the wrong one). With no KiteOS run, this shell's settings (normally the runtime's default bus)
     are used unchanged.
     """
-    from kiteos.cli.runs import alive_run_states, apply_bus, bus_of, dimos_already_imported
+    from kiteos.cli.runs import alive_run_states, apply_bus, bus_of, runtime_already_imported
 
     runs = alive_run_states()
     if len(runs) > 1:
@@ -201,12 +206,12 @@ def attach_to_run(purpose: str) -> RunState | None:
             code=2,
         )
     if not runs:
-        note(f"{purpose}: no KiteOS run found on this host; using this shell's dimOS bus settings")
+        note(f"{purpose}: no KiteOS run found on this host; using this shell's runtime bus settings")
         return None
     run = runs[0]
-    if dimos_already_imported():
+    if runtime_already_imported():
         if bus_of(os.environ) != {k: v for k, v in run.bus.items()}:
-            die(f"dimOS is already loaded on another bus; cannot attach to {run.describe()}", code=2)
+            die(f"the runtime is already loaded on another bus; cannot attach to {run.describe()}", code=2)
         return run
     apply_bus(run.bus)
     note(f"{purpose}: attached to {escape(run.describe())}")

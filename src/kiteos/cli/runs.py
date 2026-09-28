@@ -1,15 +1,16 @@
 # Copyright 2026 Kite ML.
-"""Which dimOS stacks run on this host, and which bus a KiteOS run uses.
+"""Which robot stacks run on this host, and which bus a KiteOS run uses.
 
-dimOS picks its pub/sub + RPC bus from ``LCM_DEFAULT_URL`` and ``ZENOH_SCOUT_ADDR``; two stacks on
-the same host and bus share topics, and a zenoh RPC runs on EVERY stack that serves the name. So:
+The runtime picks its pub/sub + RPC bus from ``LCM_DEFAULT_URL`` and ``ZENOH_SCOUT_ADDR``; two stacks
+on the same host and bus share topics, and a zenoh RPC runs on EVERY stack that serves the name. So:
 
 * a mock run (no ``--real``) gets a private bus (its own LCM port and zenoh scouting group) and
-  free ports for WebXR and viser, so it can never talk to a real stack;
-* ``kiteos teleop|collect start|rollout start`` refuse to start while another stack runs on this
-  host (dimOS run registry, KiteOS run-state files, a process-table scan for dimOS / kite_rollout
-  stacks that are not registered, listeners on the WebXR / viser ports and, for ``--real``, a
-  short passive listen on the target bus that never publishes);
+  free ports for WebXR and viser, so it can never talk to a real stack; so does every
+  hardware-free ``kiteos run``;
+* ``kiteos teleop|collect start|rollout start|run`` refuse to start while another stack runs on
+  this host (the runtime's run registry, KiteOS run-state files, a process-table scan for runtime
+  and kite_rollout stacks that are not registered, listeners on the WebXR / viser ports and, for
+  ``--real``, a short passive listen on the target bus that never publishes);
 * every KiteOS launch writes a run-state file (pid, real/mock, bus, ports, recording) that the
   client commands (``collect controls``, ``rollout controls``, ``fence check|teach``, ``stop``,
   ``quest proxy``) read to join the right bus and target the right run.
@@ -46,13 +47,16 @@ RESERVED_PORTS = frozenset({DEFAULT_WEBXR_PORT, DEFAULT_VISER_PORT, DEFAULT_QUES
 _LCM_GROUP = "239.255.76.67"
 _ZENOH_GROUP = "224.0.0.224"
 
-# Command lines of processes that are (part of) a running dimOS robot stack. Client TUIs such as
-# `dimos imitation rollout` are deliberately not listed: they are not stacks.
+# Command lines of processes that are (part of) a running robot stack. Client TUIs such as
+# `kiteos-runtime imitation rollout` are deliberately not listed: they are not stacks.
 STACK_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(^|[\s/])dimos\s+run\s"),
+    # KiteOS launches through its own `kiteos-runtime` entry point; stacks started with the
+    # runtime's own command (`dimos run`) are other stacks on this host and must be found too.
+    # Global options may come before `run` (`kiteos-runtime --simulation mujoco run unitree-go2`).
+    re.compile(r"(^|[\s/])(kiteos-runtime|dimos)(\s+-\S*(\s+[^\s-]\S*)?)*\s+run(\s|$)"),
     re.compile(r"\bkite_rollout\.run\b"),
     re.compile(r"\bdimos\.experimental\.isolated_python\.bootstrap\b"),
-    re.compile(r"multiprocessing\.forkserver.*dimos"),
+    re.compile(r"multiprocessing\.forkserver.*(dimos|kiteos-runtime)"),
 )
 
 PROBE_SCRIPT = r"""
@@ -104,10 +108,13 @@ class RunState:
     session_prefix: str | None = None
     started_at: str = ""
     argv: list[str] = field(default_factory=list)
+    hardware: str | None = None  # what a `kiteos run` drives ("mock hardware", "mujoco simulator", ...)
 
     @property
     def mode(self) -> str:
-        return "REAL" if self.real else "MOCK"
+        if self.real:
+            return "REAL"
+        return self.hardware.upper() if self.hardware else "MOCK"
 
     def describe(self) -> str:
         bus = "private bus" if self.private_bus else "default bus"
@@ -129,7 +136,7 @@ def kiteos_runs_dir() -> Path:
     return Path(override).expanduser() if override else state_home() / "kiteos" / "runs"
 
 
-def dimos_registry_dir() -> Path:
+def runtime_registry_dir() -> Path:
     return state_home() / "dimos" / "runs"
 
 
@@ -183,7 +190,7 @@ def alive_run_states(
     alive: Callable[[int], bool] = pid_alive,
     command: Callable[[int], str | None] = process_command,
 ) -> list[RunState]:
-    """KiteOS runs whose process is still ``dimos run``; stale files (the pid ended or was reused)
+    """KiteOS runs whose process is still ``kiteos-runtime run``; stale files (the pid ended or was reused)
     are removed."""
     directory = runs_dir or kiteos_runs_dir()
     if not directory.is_dir():
@@ -202,11 +209,11 @@ def alive_run_states(
     return states
 
 
-def dimos_registry_runs(
+def runtime_registry_runs(
     registry_dir: Path | None = None, *, alive: Callable[[int], bool] = pid_alive
 ) -> list[dict[str, Any]]:
-    """Alive entries of dimOS's run registry (read-only: never deletes dimOS's files)."""
-    directory = registry_dir or dimos_registry_dir()
+    """Alive entries of the runtime's run registry (read-only: never deletes the runtime's files)."""
+    directory = registry_dir or runtime_registry_dir()
     if not directory.is_dir():
         return []
     runs = []
@@ -238,7 +245,7 @@ def registry_run_is_mock(entry: Mapping[str, Any]) -> bool | None:
 def stack_processes(
     ps_output: str | None = None, *, exclude: Iterable[int] = ()
 ) -> list[tuple[int, str]]:
-    """``(pid, command)`` of processes that look like a running dimOS stack."""
+    """``(pid, command)`` of processes that look like a running robot stack."""
     if ps_output is None:
         try:
             ps_output = subprocess.run(
@@ -308,7 +315,7 @@ def probe_bus(
     timeout_s: float = 60.0,
     cwd: Path | None = None,
 ) -> BusProbe:
-    """Listen passively on the bus ``env`` selects and count dimOS messages. Never publishes."""
+    """Listen passively on the bus ``env`` selects and count runtime messages. Never publishes."""
     if os.environ.get("KITEOS_TEST_PRIVATE_BUS") == "1" and is_default_bus(bus_of(env)):
         # The test suite runs next to real rigs: it never listens on the default bus.
         return BusProbe(0, [], error="refusing to probe the default bus from the test suite")
@@ -342,16 +349,16 @@ class Evidence:
 def other_stacks(
     *,
     ports: Sequence[int] = (DEFAULT_WEBXR_PORT, DEFAULT_VISER_PORT),
-    registry: Callable[[], list[dict[str, Any]]] = dimos_registry_runs,
+    registry: Callable[[], list[dict[str, Any]]] = runtime_registry_runs,
     kiteos_runs: Callable[[], list[RunState]] = alive_run_states,
     processes: Callable[[], list[tuple[int, str]]] = stack_processes,
     listening: Callable[[int], bool] = port_listening,
 ) -> list[Evidence]:
-    """Everything on this host that suggests a dimOS stack is already running."""
+    """Everything on this host that suggests a robot stack is already running."""
     evidence: list[Evidence] = []
     for entry in registry():
         evidence.append(
-            Evidence("dimOS registry", f"PID {entry.get('pid')} {entry.get('blueprint', '?')} (run {entry.get('run_id', '?')})")
+            Evidence("runtime registry", f"PID {entry.get('pid')} {entry.get('blueprint', '?')} (run {entry.get('run_id', '?')})")
         )
     for state in kiteos_runs():
         evidence.append(Evidence("KiteOS run", state.describe()))
@@ -414,7 +421,7 @@ def apply_bus(bus: Mapping[str, str | None], environ: dict[str, str] | None = No
             target.pop(key, None)
 
 
-def dimos_already_imported() -> bool:
+def runtime_already_imported() -> bool:
     return any(name in sys.modules for name in ("dimos.core.global_config", "dimos.protocol.service.lcmservice"))
 
 

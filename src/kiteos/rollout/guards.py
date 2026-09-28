@@ -2,8 +2,8 @@
 """Safety checks for dual-arm policy action chunks (numpy only).
 
 ``kiteos.rollout.runtime`` runs every chunk through :func:`guard_chunk` before it
-is sent to the coordinator. This module must stay free of dimOS, LeRobot and
-torch: it is imported inside dimOS's isolated LeRobot environment and is unit
+is sent to the coordinator. This module must stay free of the runtime, LeRobot and
+torch: it is imported inside the runtime's isolated LeRobot environment and is unit
 tested on its own.
 
 Every check refuses the whole chunk by raising :class:`ChunkRejectedError`. The

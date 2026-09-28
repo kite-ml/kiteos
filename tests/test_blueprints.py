@@ -1,8 +1,8 @@
 # Copyright 2026 Kite ML.
 """KiteOS blueprint and rollout-module composition tests.
 
-These need the dimOS virtualenv. Nothing is launched: blueprints are inspected
-and parsed with dimOS's own CLI configuration parser, with model downloads
+These need the KiteOS runtime virtualenv. Nothing is launched: blueprints are inspected
+and parsed with the runtime's own CLI configuration parser, with model downloads
 forbidden.
 """
 
@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.dimos
+pytestmark = pytest.mark.runtime
 
-pytest.importorskip("dimos", reason="needs the dimOS virtualenv")
+pytest.importorskip("dimos", reason="needs the KiteOS runtime virtualenv")
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError  # noqa: E402
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser  # noqa: E402
@@ -138,7 +138,7 @@ def _pyproject_entry_points() -> dict[str, str]:
     return dict(data["project"]["entry-points"][ENTRY_POINT_GROUP])
 
 
-def test_pyproject_entry_points_follow_the_dimos_naming_rule():
+def test_pyproject_entry_points_follow_the_runtime_naming_rule():
     entry_points = _pyproject_entry_points()
     assert entry_points == EXPECTED_ENTRY_POINTS
     assert canonicalize_distribution_namespace("kiteos") == "kiteos"
@@ -152,7 +152,7 @@ def test_entry_point_targets_are_blueprint_objects():
     for target in _pyproject_entry_points().values():
         module_name, attr = target.split(":")
         value = getattr(importlib.import_module(module_name), attr)
-        # dimOS rejects factory functions; the target must be a Blueprint object.
+        # The runtime rejects factory functions; the target must be a Blueprint object.
         assert isinstance(value, Blueprint), target
 
 
@@ -177,7 +177,7 @@ def test_teleop_uses_the_fenced_coordinator(teleop):
     ]
 
 
-def test_teleop_matches_the_dimos_blueprint_except_the_coordinator(teleop):
+def test_teleop_matches_the_runtime_blueprint_except_the_coordinator(teleop):
     from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
         teleop_webxr_dual_openyam,
     )
@@ -267,7 +267,7 @@ def test_collection_composition(collection):
     }
 
 
-def test_collection_mirrors_the_dimos_blueprint(collection):
+def test_collection_mirrors_the_runtime_blueprint(collection):
     from dimos.robot.manipulators.dual_openyam.blueprints.learning_collection import (
         dual_openyam_quest_collection,
     )
@@ -280,7 +280,7 @@ def test_collection_mirrors_the_dimos_blueprint(collection):
         ours_kwargs = _comparable(ours_parsed.module_kwargs(name))
         theirs_kwargs = _comparable(theirs_parsed.module_kwargs(name))
         if name == "manipulationmodule":
-            # KiteOS keeps viser local; the dimOS collection opens it to the LAN.
+            # KiteOS keeps viser local; the runtime's collection opens it to the LAN.
             assert ours_kwargs["visualization"]["host"] == "127.0.0.1"
             assert theirs_kwargs["visualization"]["host"] == "0.0.0.0"
             ours_kwargs["visualization"]["host"] = theirs_kwargs["visualization"]["host"]
@@ -290,7 +290,7 @@ def test_collection_mirrors_the_dimos_blueprint(collection):
             ours_kwargs.pop("instance_name", None)
             theirs_kwargs.pop("instance_name", None)
         if name in collection.CAMERA_ROLES:
-            # KiteOS defaults to the lab rig's mapping (dimOS enumerates the roles 0, 1, 2).
+            # KiteOS defaults to the lab rig's mapping (the runtime enumerates the roles 0, 1, 2).
             assert ours_kwargs["hardware"]["camera_index"] == collection.DEFAULT_CAMERA_INDICES[name]
             ours_kwargs["hardware"]["camera_index"] = theirs_kwargs["hardware"]["camera_index"]
         assert ours_kwargs == theirs_kwargs, name
@@ -563,7 +563,7 @@ def test_policy_module_exports_kiteos_to_the_isolated_runtime(monkeypatch):
 
 def test_isolated_runtime_satisfies_the_contract():
     """Only runs where dimos_lerobot, LeRobot and torch are importable (the isolated env)."""
-    pytest.importorskip("dimos_lerobot.runtime", reason="needs dimOS's isolated LeRobot env")
+    pytest.importorskip("dimos_lerobot.runtime", reason="needs the runtime's isolated LeRobot env")
     from dimos.experimental.isolated_python.bootstrap import load_class, validate_runtime
 
     runtime = load_class(DualArmPolicyModule.implementation)
@@ -579,7 +579,7 @@ def test_webxr_server_binds_loopback_by_default():
     assert KiteArmTeleopConfig().server_host == "127.0.0.1"
 
     class FakeServer:
-        host = "0.0.0.0"  # what dimOS's start() constructs
+        host = "0.0.0.0"  # what the runtime's start() constructs
         ran = threading.Event()
 
         def run(self, **_: object) -> None:
@@ -608,7 +608,7 @@ def test_recorder_shutdown_timeout_flag_reaches_the_recorder(collection, tmp_pat
     flags = collection_flags(tmp_path / "rec", "close the box")
     parsed = _parse(collection.dual_openyam_collection, *flags)
     assert parsed.module_kwargs("recorder")["shutdown_timeout"] == RECORDER_SHUTDOWN_TIMEOUT_S
-    assert RECORDER_SHUTDOWN_TIMEOUT_S < 120.0  # below dimOS's module stop RPC timeout
+    assert RECORDER_SHUTDOWN_TIMEOUT_S < 120.0  # below the runtime's module stop RPC timeout
 
 
 def test_cli_safety_flags_beat_environment_and_config_file(teleop, tmp_path):

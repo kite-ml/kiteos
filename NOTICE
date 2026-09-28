@@ -6,8 +6,8 @@ Copyright 2025-2026 Dimensional Inc., licensed under the Apache License,
 Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
 
 KiteOS does not modify the dimOS source tree. It is installed into the
-virtualenv of a separate, pinned dimOS checkout. deploy/dimos/dual-collection.bundle
-is a git bundle of dimOS source commits and is distributed under the dimOS
+virtualenv of a separate, pinned dimOS checkout (installed as kiteos-runtime).
+deploy/runtime/kiteos-runtime.bundle is a git bundle of dimOS source commits and is distributed under the dimOS
 license (Apache-2.0).
 
 Portions of KiteOS are copied or adapted from dimOS. Each such source file keeps

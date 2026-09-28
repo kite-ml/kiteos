@@ -1,11 +1,11 @@
 # Copyright 2026 Kite ML.
 """Quest (WebXR) arm-teleop module whose web server listens on loopback only.
 
-dimOS's ``WebXRTeleopModule`` builds its HTTPS server with ``host="0.0.0.0"``: anyone on the
+the runtime's ``WebXRTeleopModule`` builds its HTTPS server with ``host="0.0.0.0"``: anyone on the
 station's LAN could open ``https://<station>:8443/teleop``, connect before the operator's Quest
 and drive both arms. The Quest never needs that: it reaches the server over USB (``adb reverse``
 to the KiteOS proxy on 127.0.0.1:8080, which relays to 127.0.0.1:8443). ``KiteArmTeleopModule``
-is dimOS's ``ArmTeleopModule`` with the server bound to ``server_host`` (default 127.0.0.1);
+is the runtime's ``ArmTeleopModule`` with the server bound to ``server_host`` (default 127.0.0.1);
 ``--armteleopmodule.server-host 0.0.0.0`` restores LAN access deliberately.
 """
 
@@ -17,7 +17,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Keeps dimOS's flag prefix (--armteleopmodule.*) and remapping keys.
+# Keeps the runtime's flag prefix (--armteleopmodule.*) and remapping keys.
 INSTANCE_NAME = "armteleopmodule"
 LOOPBACK = "127.0.0.1"
 

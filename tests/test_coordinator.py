@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
-"""KiteDualOpenYamCoordinator: fence wiring into dimOS's coordinator (in-process, mock arms).
+"""KiteDualOpenYamCoordinator: fence wiring into the runtime's coordinator (in-process, mock arms).
 
-Coordinators are constructed the way dimOS's own control tests construct them. "Real" hardware is
+Coordinators are constructed the way the runtime's own control tests construct them. "Real" hardware is
 a stub registered in place of the Damiao factory; no CAN bus, camera or blueprint is touched.
 """
 
@@ -19,10 +19,10 @@ import numpy as np
 import pytest
 import yaml
 
-pytestmark = pytest.mark.dimos
-pytest.importorskip("dimos", reason="needs the dimOS virtualenv")
+pytestmark = pytest.mark.runtime
+pytest.importorskip("dimos", reason="needs the KiteOS runtime virtualenv")
 
-# Keep in-process RPC transports on a private, loopback-only bus (as dimOS's conftest does).
+# Keep in-process RPC transports on a private, loopback-only bus (as the runtime's conftest does).
 os.environ.setdefault("LCM_DEFAULT_URL", "udpm://239.255.76.67:7917?ttl=0")
 os.environ.setdefault("ZENOH_SCOUT_ADDR", "224.0.0.224:17917")
 
@@ -103,7 +103,7 @@ def stub_real_hardware(monkeypatch) -> list[dict[str, Any]]:
 
 @pytest.fixture
 def make_coordinator() -> Iterator[Callable[..., KiteDualOpenYamCoordinator]]:
-    """Real coordinators (as in dimOS's test_control.py), all stopped on teardown."""
+    """Real coordinators (as in the runtime's test_control.py), all stopped on teardown."""
     made: list[KiteDualOpenYamCoordinator] = []
 
     def make(**kwargs: Any) -> KiteDualOpenYamCoordinator:
@@ -152,7 +152,7 @@ def test_class_and_config_pickle_for_forkserver_workers():
     assert restored.require_fence_on_hardware is True
     assert restored.left_can_port == "can_left"
     with pytest.raises(ValueError):
-        KiteDualOpenYamCoordinatorConfig(fence="nope")  # extra="forbid" like every dimOS config
+        KiteDualOpenYamCoordinatorConfig(fence="nope")  # extra="forbid" like every runtime config
 
 
 def test_rpcs_include_the_fence_and_keep_the_overrides():
@@ -217,7 +217,7 @@ def test_real_hardware_with_a_fence_is_wrapped(make_coordinator, stub_real_hardw
     assert isinstance(adapter, FencedWholeBodyAdapter)
     assert isinstance(adapter.inner, StubRealAdapter)
     assert stub_real_hardware[0]["dof"] == 14
-    assert "runtime_config" in stub_real_hardware[0]  # dimOS's kwargs are forwarded untouched
+    assert "runtime_config" in stub_real_hardware[0]  # the runtime's kwargs are forwarded untouched
     assert coordinator.fence_status()["hardware"]["dual_openyam"]["real_hardware"] is True
     with pytest.raises(ValueError, match="monitor"):  # cannot be switched to monitor later
         adapter.reload(FenceConfig(mode="monitor"))
@@ -419,7 +419,7 @@ def test_task_invoke_execute_goes_through_the_fence_precheck(make_coordinator, t
     assert coordinator.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "on_joint_command", {"msg": msg, "t_now": 0.0}) is False
     assert not task.is_active()
 
-    # Safe motions and read-only commands still reach dimOS's task.
+    # Safe motions and read-only commands still reach the runtime's task.
     names = list(DUAL_OPENYAM_ARM_JOINTS)
     current = dict(zip(names, [*HOME, *HOME], strict=True))
     safe = arm_trajectory(HOME, [0.2, 1.0, 1.1, 0.0, 0.0, 0.0])

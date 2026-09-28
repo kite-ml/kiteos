@@ -23,7 +23,7 @@ Hard rules
 ```
 pyproject.toml                  # name "kiteos", console script "kiteos", setup (blueprint) entry points
 CONTRACTS.md  README.md  NOTICE
-src/kiteos/__init__.py          # __version__ = "0.1.0"; BRAND constants only
+src/kiteos/__init__.py          # __version__ = "0.1.1"; BRAND constants only
 src/kiteos/brand.py             # BRAND_NAME="KiteOS", colors, ascii banner
 src/kiteos/config.py            # StationConfig (see below)
 src/kiteos/safety/__init__.py

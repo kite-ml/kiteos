@@ -1,9 +1,9 @@
 # Copyright 2026 Kite ML.
-"""KiteOS Quest teleop proxy: lets a USB-tethered Quest reach the dimOS WebXR teleop server.
+"""KiteOS Quest teleop proxy: lets a USB-tethered Quest reach the WebXR teleop server.
 
 The headset talks to this machine over USB: ``adb reverse`` maps the headset's
 ``localhost:PORT`` to this proxy on ``127.0.0.1:PORT``, and the proxy forwards to the
-dimOS WebXR server on ``https://127.0.0.1:8443`` (self-signed, so TLS verification is off).
+WebXR teleop server on ``https://127.0.0.1:8443`` (self-signed, so TLS verification is off).
 
 - The Quest opens ``http://localhost:PORT/teleop``. Browsers treat http://localhost as a
   secure context, so WebXR works without a certificate prompt.
@@ -12,7 +12,7 @@ dimOS WebXR server on ``https://127.0.0.1:8443`` (self-signed, so TLS verificati
   that to its own origin and serves the vendored module graph, so the headset needs no
   internet access.
 - ``/teleop`` is branded as KiteOS on the fly (title, heading, stylesheet and a header with
-  a live status pill). If dimOS changes the page and the expected markup is missing, the
+  a live status pill). If the runtime changes the page and the expected markup is missing, the
   stock page is served unmodified: branding must never break teleop.
 - ``adb reverse`` is re-applied whenever the headset reconnects (sleep, replug).
 
@@ -116,9 +116,9 @@ BRAND_HEADER = (
 
 
 def brand_teleop_html(page: str) -> str | None:
-    """Return the dimOS teleop page branded as KiteOS, or None if its markup is unexpected.
+    """Return the runtime teleop page branded as KiteOS, or None if its markup is unexpected.
 
-    Every edit is count-checked against the stock dimOS ``index.html``. If any anchor is
+    Every edit is count-checked against the stock the runtime ``index.html``. If any anchor is
     missing or ambiguous nothing is changed at all: a half-branded page is worse than the
     stock one, and a broken page would stop teleop.
     """
@@ -584,7 +584,7 @@ class QuestProxy:
         """Point teleop.js's esm.sh imports at the vendored copies the proxy serves.
 
         Only imports that are vendored are rewritten; any other import keeps its esm.sh URL, so a
-        dimOS pin bump degrades to "needs internet" instead of breaking the page. A warning is
+        runtime pin bump degrades to "needs internet" instead of breaking the page. A warning is
         logged once per module that is not vendored.
         """
 
@@ -683,7 +683,7 @@ class QuestProxy:
         if upstream_close is None:
             return WSCloseCode.GOING_AWAY, ""
         if upstream_close[0] in _SENDABLE_CLOSE_CODES:
-            # Pass dimOS's reason on, e.g. 1008 "A WebXR control client is already
+            # Pass the runtime's reason on, e.g. 1008 "A WebXR control client is already
             # connected", so the headset sees why it was dropped.
             return upstream_close
         return WSCloseCode.OK, ""
@@ -750,7 +750,7 @@ def create_app(
 ) -> web.Application:
     """Build the proxy application.
 
-    ``upstream`` is the dimOS WebXR server origin (``https://host:port``; ``http://`` is
+    ``upstream`` is the WebXR teleop server origin (``https://host:port``; ``http://`` is
     accepted for tests). ``adb`` only feeds ``/kiteos/api/status``; running the keeper
     is the caller's job (see :func:`serve`).
     """
@@ -870,7 +870,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="listen port, also reversed onto the headset (default: %(default)s)",
     )
     parser.add_argument(
-        "--upstream", default=DEFAULT_UPSTREAM, help="dimOS WebXR server (default: %(default)s)"
+        "--upstream", default=DEFAULT_UPSTREAM, help="WebXR teleop server (default: %(default)s)"
     )
     parser.add_argument("--no-adb", action="store_true", help="do not manage adb reverse")
     parser.add_argument(

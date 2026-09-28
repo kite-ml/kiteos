@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
 """Merge prepared LeRobot sessions into one dataset and push it to the Hugging Face Hub.
 
-The merged dataset is rebuilt from all sessions on every run. Runs in dimOS's isolated
+The merged dataset is rebuilt from all sessions on every run. Runs in the runtime's isolated
 LeRobot env (see ``kiteos upload``).
 Usage: hub_push.py REPO_ID MERGED_ROOT PRIVATE(True|False) SESSION_ROOT...
 """

@@ -16,13 +16,13 @@
 
 """KiteOS coupled WebXR teleoperation for the complete Dual OpenYAM.
 
-A copy of dimOS ``build_dual_openyam_webxr``
+A copy of the runtime ``build_dual_openyam_webxr``
 (``dimos/robot/manipulators/dual_openyam/blueprints/teleop.py``) whose
 coordinator is ``KiteDualOpenYamCoordinator``, so every command passes the
 KiteOS safety fence before it reaches the motors. The teleop IK task is rebuilt
-here instead of importing dimOS's private module names.
+here instead of importing the runtime's private module names.
 
-Run with ``dimos run kiteos.dual-openyam-teleop``. Without CAN ports
+Run with ``kiteos teleop`` (it calls ``kiteos-runtime run kiteos.dual-openyam-teleop``). Without CAN ports
 (``--controlcoordinator.left-can-port`` / ``--controlcoordinator.right-can-port``)
 the coordinator drives mock arms. The viser viewer binds 127.0.0.1; expose it
 with ``--manipulationmodule.visualization.host 0.0.0.0``. The Quest WebXR server

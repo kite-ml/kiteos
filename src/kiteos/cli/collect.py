@@ -2,14 +2,14 @@
 """``kiteos collect start|controls``: record teleoperated demonstrations.
 
 ``start`` runs the collection blueprint in the foreground, recording into the next free
-``<recordings>/<prefix>-NNN`` (dimOS never reuses a recording folder). Without ``--real`` the
+``<recordings>/<prefix>-NNN`` (the runtime never reuses a recording folder). Without ``--real`` the
 arms are mock and the session is recorded as ``mock-<prefix>-NNN``, which ``kiteos upload`` never
 pushes. ``controls`` attaches the KiteOS episode controls to the running stack from a second
 terminal; U (delete last saved) and P (pause and upload) act on exactly the session that stack is
 recording (from its KiteOS run-state file), never on a guess.
 
 On macOS run both in the foreground from a terminal that has camera permission:
-``dimos run --daemon`` crashes there (pyarrow's libcurl after fork).
+background (daemon) runs crash there (pyarrow's libcurl after fork).
 """
 
 from __future__ import annotations
@@ -68,10 +68,10 @@ def start(
         Optional[str], typer.Option("--session", help="Session prefix (default: station session_prefix).")
     ] = None,
     task: Annotated[Optional[str], typer.Option("--task", help="Task instruction (default: station task).")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the dimOS command and exit.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the runtime command and exit.")] = False,
     allow_concurrent: Annotated[
         bool,
-        typer.Option("--allow-concurrent", help="MOCK only: start even if another dimOS stack runs on this host."),
+        typer.Option("--allow-concurrent", help="MOCK only: start even if another robot stack runs on this host."),
     ] = False,
     station_ports: Annotated[
         bool, typer.Option("--station-ports", help="MOCK only: use the station's WebXR/viser ports (Quest practice).")
@@ -104,7 +104,7 @@ def start(
 
 
 def power_down(station: StationConfig, pid: int | None = None) -> bool:
-    """After P: confirm someone holds the arms, then stop dimOS gracefully (SIGTERM only)."""
+    """After P: confirm someone holds the arms, then stop the runtime gracefully (SIGTERM only)."""
     from kiteos.cli.stop import power_down_warning, stop_running
 
     console.print("\nPausing: the take in progress was saved.")
@@ -155,7 +155,7 @@ def controls(
 
         from kiteos.cli.collect_tui import PAUSE_RESULT, KiteCollectionApp
     except ImportError as exc:
-        die(f"dimOS is not importable here ({exc}); run kiteos from the dimOS virtualenv", code=2)
+        die(f"the KiteOS runtime is not importable here ({exc}); run kiteos from the runtime virtualenv (see `kiteos doctor`)", code=2)
 
     driver = None
     try:

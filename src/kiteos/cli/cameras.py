@@ -249,6 +249,6 @@ def check(station: StationOption = None) -> None:
     try:
         import cv2  # noqa: F401
     except ImportError as exc:
-        die(f"OpenCV is not available ({exc}); run kiteos from the dimOS virtualenv", code=2)
+        die(f"OpenCV is not available ({exc}); run kiteos from the runtime virtualenv", code=2)
     note("turn each lens to maximise its sharpness; 1/2/3 pick the zoomed camera, r resets, q quits")
     focus_view(cams)

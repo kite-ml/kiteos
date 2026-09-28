@@ -15,12 +15,12 @@ def teleop(
     real: Annotated[bool, typer.Option("--real", help="Drive the real arms (default: simulated).")] = False,
     no_cameras: Annotated[
         bool,
-        typer.Option("--no-cameras", help="Never pass camera selectors to dimOS."),
+        typer.Option("--no-cameras", help="Never pass camera selectors to the runtime."),
     ] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the dimOS command and exit.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the runtime command and exit.")] = False,
     allow_concurrent: Annotated[
         bool,
-        typer.Option("--allow-concurrent", help="MOCK only: start even if another dimOS stack runs on this host."),
+        typer.Option("--allow-concurrent", help="MOCK only: start even if another robot stack runs on this host."),
     ] = False,
     station_ports: Annotated[
         bool, typer.Option("--station-ports", help="MOCK only: use the station's WebXR/viser ports (Quest practice).")

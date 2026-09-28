@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
 """KiteOS safety fence (pure numpy + pydantic + pyyaml).
 
-This package re-exports only the dependency-light core. The dimOS integration lives in
+This package re-exports only the dependency-light core. The runtime integration lives in
 ``kiteos.safety.adapter`` and ``kiteos.safety.coordinator`` and must be imported explicitly.
 """
 

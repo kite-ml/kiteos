@@ -66,7 +66,7 @@ The proxy logs each adb state change once:
 | esm.sh module paths | Served from `vendor/esm/` (offline). |
 | `/ws` (any Upgrade request) | WebSocket relay to the teleop server. |
 | `/kiteos/*` | `static/` files: `brand.css`, `logo.svg`, `status.js`. |
-| `/kiteos/api/status` | `{"proxy": "ok", "upstream": "up"\|"down", "adb": "connected"\|"unauthorized"\|"absent"\|"disabled", "adb_detail": "...", "version": "0.1.0"}` |
+| `/kiteos/api/status` | `{"proxy": "ok", "upstream": "up"\|"down", "adb": "connected"\|"unauthorized"\|"absent"\|"disabled", "adb_detail": "...", "version": "0.1.1"}` |
 | anything else | Proxied to the teleop server. Hop-by-hop headers are stripped, bodies are fetched uncompressed and every response gets `Cache-Control: no-store`. Upstream redirects are rewritten to the proxy's origin. |
 
 If the teleop server is not running, HTML requests get a KiteOS "Teleop server is not running" page that

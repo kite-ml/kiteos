@@ -1,5 +1,5 @@
 # Copyright 2026 Kite ML.
-"""Pure-numpy tests for kiteos.rollout.guards (no dimOS, LeRobot or torch)."""
+"""Pure-numpy tests for kiteos.rollout.guards (no runtime, LeRobot or torch)."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ def test_arm_only_policy_without_grippers():
 def test_validated_act_policy_first_chunks_pass_the_guards():
     """Regression: the review found the first chunk of every evaluated episode refused.
 
-    Replays the checkpoint's saved open-loop eval chunks (clipped to the gripper range like dimOS)
+    Replays the checkpoint's saved open-loop eval chunks (clipped to the gripper range like the runtime)
     from the recorded states at 1.0x and 0.3x. Skips when the local checkpoint/dataset is absent.
     """
     import json

@@ -1,7 +1,7 @@
 /* Copyright 2026 Kite ML. */
 /*
- * KiteOS look for the dimOS WebXR teleop page. The KiteOS Quest proxy links this after
- * dimOS's teleop.css so these rules win the cascade. Everything is local (system fonts,
+ * KiteOS look for the WebXR teleop page. The KiteOS Quest proxy links this after
+ * the stock teleop.css so these rules win the cascade. Everything is local (system fonts,
  * no CDNs) because the tethered headset has no internet. Type is sized for reading in
  * the Quest browser at arm's length.
  */
@@ -30,7 +30,7 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 
-/* ---- dimOS teleop page overrides (selectors from teleop.css) ---- */
+/* ---- stock teleop page overrides (selectors from teleop.css) ---- */
 
 h1 {
     font-size: 56px;
@@ -93,7 +93,7 @@ button.disconnect:hover {
     top: 0;
     left: 0;
     right: 0;
-    z-index: 200; /* above dimOS's #ui (z-index 100) */
+    z-index: 200; /* above the stock page's #ui (z-index 100) */
     display: flex;
     align-items: center;
     gap: 16px;

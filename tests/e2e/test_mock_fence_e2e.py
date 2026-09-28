@@ -1,7 +1,7 @@
 # Copyright 2026 Kite ML.
-"""End-to-end proof of the KiteOS fence through a real ``dimos run`` with MOCK arms.
+"""End-to-end proof of the KiteOS fence through a real ``kiteos-runtime run`` with MOCK arms.
 
-Launches ``uv run --no-sync dimos run kiteos.dual-openyam-teleop --config <empty>
+Launches ``uv run --no-sync kiteos-runtime run kiteos.dual-openyam-teleop --config <empty>
 --controlcoordinator.fence-path tests/fixtures/fence_e2e.yaml
 --controlcoordinator.expect-mock true ...`` (the flags the KiteOS CLI pins for a mock run) in the
 foreground (never ``--daemon``, never CAN ports, no cameras in this blueprint) on a private bus,
@@ -12,7 +12,7 @@ connects with ``Dimos.connect()`` and drives the ``ControlCoordinator`` RPCs and
 A. ``execute_trajectory`` home -> reach (fingertip beyond the fixture's glass plane) is rejected
    by the coordinator's fence precheck and the arm does not move.
 B. The same trajectory through ``task_invoke("joint_trajectory", "execute", ...)`` (a declared
-   dimOS task command) and ``task_invoke(..., "on_joint_command", ...)`` is rejected by the same
+   runtime task command) and ``task_invoke(..., "on_joint_command", ...)`` is rejected by the same
    precheck; the arm does not move.
 B2. A zone-less fence is hot-reloaded, the reach trajectory is accepted, and the glass fence is
    reloaded while it executes: the adapter holds the arm short of the plane and the supervisor
@@ -42,7 +42,7 @@ coordinator would refuse a real adapter), and verifies over RPC that it is talki
 coordinator with the fixture fence and a ``MockWholeBodyAdapter`` before it sends a single motion
 command.
 
-Set ``KITEOS_E2E_ARTIFACTS=<dir>`` to keep the dimOS log and a JSON summary of the evidence.
+Set ``KITEOS_E2E_ARTIFACTS=<dir>`` to keep the runtime log and a JSON summary of the evidence.
 """
 
 from __future__ import annotations
@@ -64,8 +64,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.mock_e2e, pytest.mark.dimos]
-dimos_pkg = pytest.importorskip("dimos", reason="needs the dimOS virtualenv")
+pytestmark = [pytest.mark.mock_e2e, pytest.mark.runtime]
+runtime_pkg = pytest.importorskip("dimos", reason="needs the KiteOS runtime virtualenv")
 
 from dimos.core.global_config import global_config  # noqa: E402
 from dimos.core.transport_factory import make_transport  # noqa: E402
@@ -110,11 +110,11 @@ KEY_LOG_MARKERS = (
 # --------------------------------------------------------------------------- helpers
 
 
-def _dimos_root() -> Path:
-    """The dimOS checkout the venv's ``dimos`` package comes from (editable install)."""
-    root = Path(dimos_pkg.__file__).resolve().parents[1]
+def _runtime_root() -> Path:
+    """The runtime checkout the venv's runtime package comes from (editable install)."""
+    root = Path(runtime_pkg.__file__).resolve().parents[1]
     if not (root / "pyproject.toml").is_file():
-        pytest.skip(f"dimOS is not an editable checkout ({root}); cannot `uv run` from it")
+        pytest.skip(f"the runtime is not an editable checkout ({root}); cannot `uv run` from it")
     return root
 
 
@@ -131,17 +131,17 @@ def _require_private_bus() -> dict[str, str]:
     lcm_url = os.environ.get("LCM_DEFAULT_URL", "")
     scout = os.environ.get("ZENOH_SCOUT_ADDR", "")
     if not lcm_url or ":7667" in lcm_url or not scout or scout.endswith(":7446"):
-        pytest.fail(f"refusing to launch dimOS on a default bus: {lcm_url=} {scout=}")
-    # dimOS read these at import; they must match what the child process will use.
+        pytest.fail(f"refusing to launch the runtime on a default bus: {lcm_url=} {scout=}")
+    # The runtime read these at import; they must match what the child process will use.
     if global_config.zenoh_scout_addr != scout:
         pytest.fail(
-            f"dimOS in this process scouts {global_config.zenoh_scout_addr!r}, not the private "
+            f"the runtime in this process scouts {global_config.zenoh_scout_addr!r}, not the private "
             f"{scout!r}; refusing to connect"
         )
     from dimos.protocol.service import lcmservice
 
     if lcmservice._DEFAULT_LCM_URL != lcm_url:
-        pytest.fail(f"dimOS LCM URL is {lcmservice._DEFAULT_LCM_URL!r}, not {lcm_url!r}")
+        pytest.fail(f"the runtime LCM URL is {lcmservice._DEFAULT_LCM_URL!r}, not {lcm_url!r}")
     return {
         "LCM_DEFAULT_URL": lcm_url,
         "ZENOH_SCOUT_ADDR": scout,
@@ -158,7 +158,7 @@ def _q14(named: dict[str, float]) -> np.ndarray:
 
 
 def _left_trajectory(q0: np.ndarray | list[float], q1: list[float], duration: float) -> Any:
-    """A 2-point left-arm JointTrajectory, the shape dimOS's rollout/planner send."""
+    """A 2-point left-arm JointTrajectory, the shape the runtime's rollout/planner send."""
     return JointTrajectory(
         joint_names=list(LEFT),
         points=[
@@ -234,18 +234,18 @@ def mock_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MockRun]:
     uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
     if not Path(uv).exists():
         pytest.skip("uv is not installed")
-    root = _dimos_root()
+    root = _runtime_root()
     webxr_port = _free_tcp_port()
-    empty_config = tmp_path_factory.mktemp("dimos_config") / "config.json"
+    empty_config = tmp_path_factory.mktemp("runtime_config") / "config.json"
     empty_config.write_text("{}\n")
     argv = [
         uv,
         "run",
         "--no-sync",
-        "dimos",
+        "kiteos-runtime",
         "run",
         BLUEPRINT,
-        # What `kiteos teleop` (mock) pins: no inherited dimOS config, fence required, mock only.
+        # What `kiteos teleop` (mock) pins: no inherited runtime config, fence required, mock only.
         "--config",
         str(empty_config),
         "--controlcoordinator.fence-path",
@@ -270,7 +270,7 @@ def mock_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MockRun]:
         [str(REPO / "src"), *filter(None, [os.environ.get("PYTHONPATH")])]
     )
     env.pop("DIMOS_RUN_ID", None)
-    log_path = tmp_path_factory.mktemp("mock_e2e") / "dimos_run.log"
+    log_path = tmp_path_factory.mktemp("mock_e2e") / "runtime_run.log"
     with log_path.open("wb") as log_file:
         # Foreground run (macOS --daemon crashes); own session so pytest's Ctrl+C is not
         # delivered to it directly: teardown below sends SIGTERM like `kiteos stop`.
@@ -304,7 +304,7 @@ def _save_artifacts(run: MockRun, summary: dict[str, Any] | None) -> None:
         return
     out = Path(target).expanduser()
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(run.log_path, out / "dimos_run.log")
+    shutil.copyfile(run.log_path, out / "runtime_run.log")
     if summary is not None:
         (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
 
@@ -317,7 +317,7 @@ def _connect(run: MockRun) -> Any:
     while time.monotonic() < deadline:
         if run.proc.poll() is not None:
             pytest.fail(
-                f"dimos run exited early with {run.proc.returncode}:\n"
+                f"kiteos-runtime run exited early with {run.proc.returncode}:\n"
                 + "\n".join(run.log().splitlines()[-40:])
             )
         client = None
@@ -382,7 +382,7 @@ def test_fence_holds_mock_arms_end_to_end(mock_run: MockRun) -> None:
             summary["webxr_listen"] = [ln for ln in listing.splitlines() if "LISTEN" in ln]
         # KiteOS's passive probe (what `--real` runs before starting) sees this stack's traffic
         # on its bus, and the process scan finds it.
-        probe = runs.probe_bus(mock_run.env, cwd=_dimos_root())
+        probe = runs.probe_bus(mock_run.env, cwd=_runtime_root())
         assert probe.busy, probe
         assert any("coordinator_joint_state" in t for t in probe.topics), probe.topics
         assert any(pid == mock_run.proc.pid for pid, _ in runs.stack_processes()), "process scan"
@@ -666,4 +666,4 @@ def test_fence_holds_mock_arms_end_to_end(mock_run: MockRun) -> None:
         if "Traceback (most recent call last)" in line
         and not (i > 0 and "ResourceTracker.__del__" in lines[i - 1])
     ]
-    assert not unexpected, "unexpected traceback in the dimOS log:\n" + "\n---\n".join(unexpected)
+    assert not unexpected, "unexpected traceback in the runtime log:\n" + "\n---\n".join(unexpected)

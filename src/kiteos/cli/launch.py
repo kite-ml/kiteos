@@ -1,15 +1,15 @@
 # Copyright 2026 Kite ML.
-"""Run helpers: turn the station config into a ``dimos run`` command and start it safely.
+"""Run helpers: turn the station config into a ``kiteos-runtime run`` command and start it safely.
 
-``build_dimos_command`` is pure (no filesystem, no hardware) and unit-tested. ``launch`` adds
+``build_runtime_command`` is pure (no filesystem, no hardware) and unit-tested. ``launch`` adds
 the operator-facing safety gates:
 
 * nothing inherited can change what the stack drives: CONTROLCOORDINATOR__/G__/TRANSPORTS__
-  settings in the environment or in the dimOS checkout's ``.env`` are refused, dimOS's user config
+  settings in the environment or in the runtime checkout's ``.env`` are refused, the runtime's user config
   file is replaced by an empty one (``--config``), and the fence requirement and the expected arm
   type (``--controlcoordinator.expect-mock``) are always passed as flags, which beat every other
   source;
-* another dimOS stack on this host (registry, KiteOS run, process, WebXR/viser listener, or for
+* another robot stack on this host (registry, KiteOS run, process, WebXR/viser listener, or for
   ``--real`` traffic on the target bus) is refused (see ``kiteos.cli.runs``);
 * without ``--real``: CAN ports are never passed and the coordinator refuses any real adapter, the
   run gets a private bus (own LCM port + zenoh scouting group), free WebXR/viser ports and no
@@ -40,7 +40,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from kiteos.cli import runs
-from kiteos.cli._common import confirm_typed, console, die, kiteos_env, note, warn
+from kiteos.cli._common import confirm_typed, console, die, kiteos_env, note, runtime_argv, warn
 from kiteos.config import CAMERA_ROLES, SIDES, StationConfig, is_placeholder, platform_key
 
 if TYPE_CHECKING:
@@ -55,14 +55,14 @@ VISER_FLAG = "--manipulationmodule.visualization.host"
 VISER_PORT_FLAG = "--manipulationmodule.visualization.port"
 WEBXR_PORT_FLAG = "--armteleopmodule.server-port"
 VIEWER_FLAG = "--viewer"
-DIMOS_CONFIG_FLAG = "--config"
+RUNTIME_CONFIG_FLAG = "--config"
 DEFAULT_VISER_HOST = "127.0.0.1"
 POLICY_FPS = 30.0
 MAX_REAL_START_JUMP_RAD = 0.3
-# NativeModule sends SIGKILL to the recorder this long after SIGTERM (dimOS default 2 s). Kept
-# below dimOS's 120 s module-stop RPC timeout so the stop RPC does not give up first.
+# NativeModule sends SIGKILL to the recorder this long after SIGTERM (the runtime default 2 s). Kept
+# below the runtime's 120 s module-stop RPC timeout so the stop RPC does not give up first.
 RECORDER_SHUTDOWN_TIMEOUT_S = 100.0
-# Environment keys dimOS turns into module / global / transport config: they could add CAN ports
+# Environment keys the runtime turns into module / global / transport config: they could add CAN ports
 # to a mock run, switch the fence requirement off, or move the run onto another bus.
 INJECTION_KEY = re.compile(r"(?i)^(controlcoordinator|g|transports)__")
 
@@ -71,15 +71,17 @@ Device = Literal["cuda", "mps", "cpu"]
 
 @dataclass(frozen=True)
 class BlueprintSpec:
-    """A KiteOS blueprint as registered under the ``dimos.blueprints`` entry-point group."""
+    """A setup to run: a KiteOS blueprint (registered under the ``dimos.blueprints`` entry-point
+    group, run as ``kiteos.<name>``) or, with ``package=None``, one of the runtime's own setups."""
 
     name: str
     has_cameras: bool
     description: str
+    package: str | None = DIST_NAME
 
     @property
     def run_name(self) -> str:
-        return f"{DIST_NAME}.{self.name}"
+        return f"{self.package}.{self.name}" if self.package else self.name
 
 
 BLUEPRINTS: dict[str, BlueprintSpec] = {
@@ -110,7 +112,7 @@ class LaunchPlan:
     viser_port: int | None = None
 
     def shell(self) -> str:
-        """Copy-pasteable command line (PYTHONPATH and a private bus shown, since dimOS needs them)."""
+        """Copy-pasteable command line (PYTHONPATH and a private bus shown, since the runtime needs them)."""
         exports = [f"PYTHONPATH={shlex.quote(self.env.get('PYTHONPATH', ''))}"]
         if self.private_bus:
             exports += [f"{k}={shlex.quote(self.env[k])}" for k in ("LCM_DEFAULT_URL", "ZENOH_SCOUT_ADDR")]
@@ -121,7 +123,7 @@ def camera_flag(role: str) -> str:
     return f"--{role.replace('_', '-')}.hardware.camera-index"
 
 
-def build_dimos_command(
+def build_runtime_command(
     station: StationConfig,
     blueprint: str | BlueprintSpec,
     *,
@@ -133,9 +135,9 @@ def build_dimos_command(
     environ: Mapping[str, str] | None = None,
     private_bus: Mapping[str, str] | None = None,
     ports: tuple[int, int] | None = None,
-    dimos_config: Path | None = None,
+    runtime_config: Path | None = None,
 ) -> LaunchPlan:
-    """Build the ``uv run --no-sync dimos run kiteos.<blueprint> ...`` command for this host.
+    """Build the ``uv run --no-sync kiteos-runtime run kiteos.<blueprint> ...`` command for this host.
 
     ``private_bus`` (mock runs) puts the child on its own LCM URL / zenoh scouting group;
     ``ports`` = (WebXR, viser) moves the servers off the station's fixed ports and disables the
@@ -145,9 +147,9 @@ def build_dimos_command(
     """
     spec = BLUEPRINTS[blueprint] if isinstance(blueprint, str) else blueprint
     notes: list[str] = []
-    argv = ["uv", "run", "--no-sync", "dimos", "run", spec.run_name]
-    if dimos_config is not None:
-        argv += [DIMOS_CONFIG_FLAG, str(dimos_config)]
+    argv = runtime_argv("run", spec.run_name)
+    if runtime_config is not None:
+        argv += [RUNTIME_CONFIG_FLAG, str(runtime_config)]
 
     if real and fence_path is None:
         raise LaunchError("a fence file is required to drive the real arms")
@@ -201,7 +203,7 @@ def build_dimos_command(
         notes.append("private bus: this run cannot reach (or be reached by) another stack")
     return LaunchPlan(
         argv=argv,
-        cwd=station.dimos_root_path(),
+        cwd=station.runtime_root_path(),
         env=env,
         real=real,
         blueprint=spec,
@@ -324,17 +326,33 @@ def dotenv_keys(path: Path) -> list[str]:
     return keys
 
 
-def config_injection(station: StationConfig, environ: Mapping[str, str]) -> list[str]:
-    """Settings outside the station file that would change what dimOS drives (see module doc)."""
-    found = [f"environment variable {key}" for key in environ if INJECTION_KEY.match(key)]
-    dotenv = station.dimos_root_path() / ".env"
-    found += [f"{key} in {dotenv}" for key in dotenv_keys(dotenv) if INJECTION_KEY.match(key)]
+def runtime_dotenv_files(root: Path) -> list[Path]:
+    """The dotenv files the runtime reads: the first ``.env`` above its command-line package (loaded
+    into the environment at start) and ``<root>/.env`` (read by its settings)."""
+    found: list[Path] = []
+    start = root / "dimos" / "cli"
+    for directory in (start, *start.parents):
+        candidate = directory / ".env"
+        if candidate.is_file():
+            found.append(candidate)
+            break
+    own = root / ".env"
+    if own.is_file() and own not in found:
+        found.append(own)
     return found
 
 
-def dimos_empty_config() -> Path:
-    """An empty dimOS config file passed with ``--config``, so ~/.config/dimos/config is ignored."""
-    path = runs.kiteos_runs_dir().parent / "dimos-config.json"
+def config_injection(station: StationConfig, environ: Mapping[str, str]) -> list[str]:
+    """Settings outside the station file that would change what the runtime drives (see module doc)."""
+    found = [f"environment variable {key}" for key in environ if INJECTION_KEY.match(key)]
+    for dotenv in runtime_dotenv_files(station.runtime_root_path()):
+        found += [f"{key} in {dotenv}" for key in dotenv_keys(dotenv) if INJECTION_KEY.match(key)]
+    return found
+
+
+def runtime_empty_config() -> Path:
+    """An empty runtime config file, passed with ``--config`` so the user's runtime config file is ignored."""
+    path = runs.kiteos_runs_dir().parent / "runtime-config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.is_file() or path.read_text().strip() != "{}":
         path.write_text("{}\n")
@@ -354,13 +372,13 @@ record_run: Callable[[runs.RunState], Any] = runs.write_run_state
 
 
 def refuse_other_stacks(station: StationConfig, plan: LaunchPlan, *, allow_concurrent: bool, dry_run: bool) -> None:
-    """Refuse to start while another dimOS stack runs on this host (see ``kiteos.cli.runs``)."""
+    """Refuse to start while another robot stack runs on this host (see ``kiteos.cli.runs``)."""
     evidence = list(host_stacks(ports=station_ports(station)))
     if plan.real and not evidence:
         probe = bus_probe(plan.env, cwd=plan.cwd if plan.cwd.is_dir() else None)
         if probe.busy:
             evidence.append(
-                runs.Evidence("bus", f"{probe.samples} dimOS messages on the target bus: {', '.join(probe.topics[:4])}")
+                runs.Evidence("bus", f"{probe.samples} runtime messages on the target bus: {', '.join(probe.topics[:4])}")
             )
         elif probe.error:
             warn(f"could not listen on the bus before starting ({escape(probe.error.splitlines()[-1][:160])})")
@@ -368,23 +386,25 @@ def refuse_other_stacks(station: StationConfig, plan: LaunchPlan, *, allow_concu
         return
     listing = "\n".join(f"  - {e.source}: {escape(e.detail)}" for e in evidence)
     if dry_run:
-        warn(f"another dimOS stack appears to be running on this host:\n{listing}")
+        warn(f"another robot stack appears to be running on this host:\n{listing}")
         return
+    kind = "MOCK" if plan.blueprint.package else "hardware-free"
     if not plan.real and allow_concurrent:
+        ports = "its own ports" if plan.webxr_port is not None else "the setup's usual ports (they may clash)"
         warn(
-            f"another dimOS stack appears to be running on this host:\n{listing}\n"
-            "Continuing (--allow-concurrent): this MOCK run uses a private bus and its own ports."
+            f"another robot stack appears to be running on this host:\n{listing}\n"
+            f"Continuing (--allow-concurrent): this {kind} run uses a private bus and {ports}."
             + (" It opens the station cameras too." if plan.blueprint.has_cameras else "")
         )
         return
     hint = (
-        "Stop it first (`kiteos stop`), or pass --allow-concurrent to run this MOCK stack on its "
+        f"Stop it first (`kiteos stop`), or pass --allow-concurrent to run this {kind} stack on its "
         "private bus anyway."
         if not plan.real
         else "Stop it first (`kiteos stop`, or in its own terminal). Two stacks on one bus share "
         "topics and every RPC runs on both."
     )
-    die(f"another dimOS stack is already running on this host:\n{listing}\n{hint}", code=2)
+    die(f"another robot stack is already running on this host:\n{listing}\n{hint}", code=2)
 
 
 def show_fence(fence: FenceConfig, path: Path) -> int:
@@ -459,7 +479,7 @@ def confirm_real_run(station: StationConfig) -> bool:
 
 
 def execute(plan: LaunchPlan) -> None:
-    """Replace this process with dimOS in the foreground (Ctrl-C goes straight to dimOS)."""
+    """Replace this process with the runtime in the foreground (Ctrl-C goes straight to the runtime)."""
     os.chdir(plan.cwd)
     os.execvpe(plan.argv[0], plan.argv, plan.env)
 
@@ -476,13 +496,13 @@ def launch(
     station_ports_for_mock: bool = False,
     run_info: Mapping[str, Any] | None = None,
 ) -> LaunchPlan:
-    """Run the safety gates, print the plan, then exec dimOS (unless ``dry_run``)."""
+    """Run the safety gates, print the plan, then exec the runtime (unless ``dry_run``)."""
     if real and allow_concurrent:
         die("--allow-concurrent is only for MOCK runs; a real run never shares the host", code=2)
     injected = config_injection(station, os.environ)
     if injected:
         die(
-            "dimOS would pick up settings that bypass the station file:\n  - "
+            "the runtime would pick up settings that bypass the station file:\n  - "
             + "\n  - ".join(injected)
             + "\nRemove them (CONTROLCOORDINATOR__* / G__* / TRANSPORTS__*): they can power real arms "
             "in a mock run or switch the fence requirement off.",
@@ -496,7 +516,7 @@ def launch(
         if not station_ports_for_mock:
             ports = (runs.free_tcp_port(), runs.free_tcp_port())
     try:
-        plan = build_dimos_command(
+        plan = build_runtime_command(
             station,
             blueprint,
             real=real,
@@ -505,13 +525,13 @@ def launch(
             extra_flags=extra_flags,
             private_bus=private_bus,
             ports=ports,
-            dimos_config=dimos_empty_config(),
+            runtime_config=runtime_empty_config(),
         )
     except LaunchError as exc:
         die(str(exc), code=2)
 
     if not plan.cwd.is_dir() and not dry_run:
-        die(f"dimOS checkout not found at {plan.cwd} (station: dimos_root)", code=2)
+        die(f"runtime checkout not found at {plan.cwd} (station: runtime_root)", code=2)
 
     refuse_other_stacks(station, plan, allow_concurrent=allow_concurrent, dry_run=dry_run)
 
@@ -535,12 +555,12 @@ def launch(
         )
     console.print(f"[muted]{plan.shell()}[/muted]", soft_wrap=True)
     if dry_run:
-        note("dry run: not starting dimOS")
+        note("dry run: not starting the runtime")
         return plan
     info = dict(run_info or {})
     record_run(
         runs.RunState(
-            pid=os.getpid(),  # execvpe keeps the pid: this is the dimOS process
+            pid=os.getpid(),  # execvpe keeps the pid: this is the runtime process
             real=real,
             blueprint=plan.blueprint.run_name,
             station=station.station,

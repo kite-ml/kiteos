@@ -53,7 +53,7 @@ def proxy(
     port: Annotated[Optional[int], typer.Option("--port", help="Local port (default: station quest.port).")] = None,
     station: StationOption = None,
 ) -> None:
-    """Serve the branded teleop page to the Quest over USB (adb reverse) and relay to dimOS."""
+    """Serve the branded teleop page to the Quest over USB (adb reverse) and relay to the runtime."""
     config = load_station(station)
     if port is not None:
         config.quest.port = port

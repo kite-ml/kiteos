@@ -1,13 +1,13 @@
 # Copyright 2026 Kite ML.
-"""KiteOS episode controls: dimOS's CollectionApp with KiteOS branding and extra keys.
+"""KiteOS episode controls: the runtime's CollectionApp with KiteOS branding and extra keys.
 
 Keys: Space start/save   R restart (discard this take, start a new one)
       D discard          U delete the last saved episode (before upload)
       P pause (save this take, power down, upload)
       Q detach (robot and recording keep running)
-Quest controllers: B start/save, Y discard (dimOS default).
+Quest controllers: B start/save, Y discard (the runtime default).
 
-Imports dimOS and textual; loaded lazily by ``kiteos collect controls``.
+Imports the runtime and textual; loaded lazily by ``kiteos collect controls``.
 """
 
 from __future__ import annotations

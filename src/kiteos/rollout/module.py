@@ -1,12 +1,12 @@
 # Copyright 2026 Kite ML.
 """Host-side contract for the KiteOS dual-arm LeRobot policy.
 
-``DualArmPolicyModule`` is dimOS's ``LeRobotPolicyModule`` with three camera
+``DualArmPolicyModule`` is the runtime's ``LeRobotPolicyModule`` with three camera
 inputs and the KiteOS chunk guards configured. The implementation
-(``kiteos.rollout.runtime``) runs in dimOS's isolated LeRobot environment and is
+(``kiteos.rollout.runtime``) runs in the runtime's isolated LeRobot environment and is
 referenced here only by its import string; never import it from host code.
 
-Operator controls (inherited from dimOS's LeRobot runtime): the Quest A button
+Operator controls (inherited from the runtime's LeRobot runtime): the Quest A button
 toggles the rollout, and holding EITHER grip stops it. Holding both grips also
 engages arm teleop in the rollout blueprint. A rollout refuses to start while a
 grip is held.
@@ -90,7 +90,7 @@ class DualArmPolicyModule(LeRobotPolicyModule):
 
     def _runtime_env(self) -> dict[str, str]:
         # The isolated runtime imports kiteos.rollout.*; make that work even when
-        # `dimos run` was started without the KiteOS CLI setting PYTHONPATH.
+        # the stack was started without the KiteOS CLI setting PYTHONPATH.
         return with_kiteos_pythonpath(super()._runtime_env())
 
 
@@ -99,7 +99,7 @@ def kiteos_import_root() -> str | None:
 
     Returns the parent of the ``kiteos`` package for a source or editable
     install (``<repo>/src``), or ``None`` when that parent is a
-    ``site-packages`` directory: exporting the dimOS virtualenv's site-packages
+    ``site-packages`` directory: exporting the runtime virtualenv's site-packages
     into the isolated LeRobot environment would shadow its own torch and numpy.
     """
     import kiteos

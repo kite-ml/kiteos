@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from kiteos import brand
 from kiteos.config import (
@@ -117,9 +118,33 @@ def test_example_station_is_valid_and_marks_placeholders(monkeypatch: pytest.Mon
 def test_home_paths_are_expanded() -> None:
     station = StationConfig.load(REPO / "config" / "station.yaml")
     home = Path.home()
-    assert station.recordings_path() == home / "teleop_stack" / "dimos" / "recordings"
-    assert station.datasets_path() == home / "teleop_stack" / "dimos" / "datasets"
-    assert station.dimos_root_path() == home / "teleop_stack" / "dimos"
+    assert station.recordings_path() == home / "teleop_stack" / "kiteos-runtime" / "recordings"
+    assert station.datasets_path() == home / "teleop_stack" / "kiteos-runtime" / "datasets"
+    assert station.runtime_root_path() == home / "teleop_stack" / "kiteos-runtime"
+
+
+def _minimal_station(**extra: object) -> dict:
+    data = yaml.safe_load((REPO / "config" / "station.example.yaml").read_text())
+    data.pop("runtime_root", None)
+    data.update(extra)
+    return data
+
+
+def test_runtime_root_defaults_to_kiteos_runtime() -> None:
+    station = StationConfig.model_validate(_minimal_station())
+    assert station.runtime_root_path() == Path.home() / "teleop_stack" / "kiteos-runtime"
+
+
+def test_legacy_dimos_root_key_is_still_accepted() -> None:
+    station = StationConfig.model_validate(_minimal_station(dimos_root="/opt/robot-runtime"))
+    assert station.runtime_root == "/opt/robot-runtime"
+
+
+def test_legacy_and_new_runtime_keys_must_agree() -> None:
+    with pytest.raises(ValidationError, match="keep only runtime_root"):
+        StationConfig.model_validate(_minimal_station(dimos_root="/a", runtime_root="/b"))
+    same = StationConfig.model_validate(_minimal_station(dimos_root="/a", runtime_root="/a"))
+    assert same.runtime_root == "/a"
 
 
 # --------------------------------------------------------------------------- lookup

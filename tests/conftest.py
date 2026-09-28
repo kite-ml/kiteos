@@ -1,11 +1,11 @@
 # Copyright 2026 Kite ML.
-"""Suite-wide test setup: keep every dimOS session the tests open on a private bus.
+"""Suite-wide test setup: keep every runtime session the tests open on a private bus.
 
-dimOS picks its pub/sub + RPC bus from ``LCM_DEFAULT_URL`` (read when ``lcmservice`` is imported)
+The runtime picks its pub/sub + RPC bus from ``LCM_DEFAULT_URL`` (read when ``lcmservice`` is imported)
 and ``ZENOH_SCOUT_ADDR`` (read when ``dimos.core.global_config`` is imported). A robot stack
 running on the same machine uses the defaults, so a test that serves a ``ControlCoordinator`` or
 publishes ``/joint_command`` on the default bus could reach real arms. This conftest is imported
-before any test module, so the values below are in place before the first dimOS import; they are
+before any test module, so the values below are in place before the first runtime import; they are
 per-process, so concurrent test runs do not share a bus either.
 
 Set ``KITEOS_TEST_EXTERNAL_BUS=1`` to keep the caller's bus settings (the mock e2e test then

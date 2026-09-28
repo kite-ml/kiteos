@@ -2,7 +2,7 @@
 """``kiteos doctor``: is this host ready to run KiteOS?
 
 Every check prints PASS/WARN/FAIL with remediation text. FAIL means a KiteOS run would not
-work (or not be safe); the command then exits 1. Hardware is only *listed* (``dimos hardware can
+work (or not be safe); the command then exits 1. Hardware is only *listed* (``kiteos-runtime hardware can
 list``, ``adb devices``, device nodes / system_profiler); no camera or CAN bus is opened.
 """
 
@@ -28,7 +28,7 @@ from kiteos.cli._common import (
     Level,
     StationOption,
     console,
-    dimos_argv,
+    runtime_argv,
     kiteos_env,
     run_capture,
     status_line,
@@ -44,8 +44,8 @@ EXPECTED_BLUEPRINTS = (
 # system_profiler names of cameras that are never station cameras (built-in, iPhone Continuity).
 NON_STATION_CAMERA = re.compile(r"(?i)facetime|macbook|built-?in|iphone|ipad|continuity|desk view")
 RECORDER_BINARY = Path("dimos/experimental/memory/rust/result/bin/dimos-memory-recorder")
-DIMOS_URDF = Path("data/dual_openyam_abc_box_v2/dual_openyam.urdf")
-PIN_FILE = Path("deploy/dimos/PIN")
+RUNTIME_URDF = Path("data/dual_openyam_abc_box_v2/dual_openyam.urdf")
+PIN_FILE = Path("deploy/runtime/PIN")
 VENDORED_URDF = Path(__file__).resolve().parents[1] / "data" / "dual_openyam.urdf"
 # FK self-test vectors from CONTRACTS.md (left arm, default mounts, world frame).
 FK_VECTORS: tuple[tuple[tuple[float, ...], tuple[float, float, float]], ...] = (
@@ -88,12 +88,12 @@ class Probe:
     def run(self, argv: Sequence[str], cwd: Path | None = None, timeout: float = 60.0) -> CmdResult:
         return run_capture(argv, cwd=cwd, timeout=timeout)
 
-    def dimos(self, *args: str, timeout: float = 120.0) -> CmdResult:
+    def runtime(self, *args: str, timeout: float = 120.0) -> CmdResult:
         assert self.station is not None
-        root = self.station.dimos_root_path()
+        root = self.station.runtime_root_path()
         if not root.is_dir():
-            return CmdResult(2, "", f"dimOS checkout not found at {root}")
-        return run_capture(dimos_argv(*args), cwd=root, timeout=timeout, env=kiteos_env())
+            return CmdResult(2, "", f"runtime checkout not found at {root}")
+        return run_capture(runtime_argv(*args), cwd=root, timeout=timeout, env=kiteos_env())
 
     def hf_token(self) -> str | None:
         try:
@@ -108,7 +108,7 @@ class Probe:
             path = home / "token"
             return path.read_text().strip() if path.is_file() else None
 
-    def imported_dimos_root(self) -> Path | None:
+    def imported_runtime_root(self) -> Path | None:
         spec = importlib.util.find_spec("dimos")
         if spec is None or not spec.origin:
             return None
@@ -121,7 +121,7 @@ class Probe:
         return Path(sys.executable)
 
     def running_stacks(self) -> list[str]:
-        """Descriptions of dimOS stacks running on this host (registry, KiteOS runs, processes)."""
+        """Descriptions of robot stacks running on this host (registry, KiteOS runs, processes)."""
         from kiteos.cli.runs import other_stacks
 
         return [f"{e.source}: {e.detail}" for e in other_stacks(ports=())]
@@ -133,14 +133,14 @@ class Probe:
 def check_python(probe: Probe) -> list[Check]:
     major, minor = probe.python_version()
     if (major, minor) < (3, 10):
-        return [Check("FAIL", "python", f"{major}.{minor}", "KiteOS needs Python >= 3.10 (dimOS uses 3.12)")]
+        return [Check("FAIL", "python", f"{major}.{minor}", "KiteOS needs Python >= 3.10 (the runtime uses 3.12)")]
     level: Level = "PASS" if (major, minor) == (3, 12) else "WARN"
     return [
         Check(
             level,
             "python",
             f"{major}.{minor} ({probe.interpreter()})",
-            None if level == "PASS" else "dimOS is tested on 3.12",
+            None if level == "PASS" else "the runtime is tested on 3.12",
         )
     ]
 
@@ -209,7 +209,7 @@ def check_urdf(station: StationConfig, probe: Probe) -> list[Check]:
     vendored = VENDORED_URDF
     if not probe.exists(vendored):
         return [Check("FAIL", "URDF", f"missing {vendored}", "reinstall KiteOS (the URDF ships with the package)")]
-    upstream = station.dimos_root_path() / DIMOS_URDF
+    upstream = station.runtime_root_path() / RUNTIME_URDF
     if probe.exists(upstream):
         same = vendored.read_bytes() == upstream.read_bytes()
         if not same:
@@ -217,12 +217,12 @@ def check_urdf(station: StationConfig, probe: Probe) -> list[Check]:
                 Check(
                     "WARN",
                     "URDF",
-                    "vendored copy differs from dimOS's model",
+                    "vendored copy differs from the runtime's model",
                     f"compare {vendored} with {upstream}; the fence uses the vendored copy",
                 )
             ]
-        return [Check("PASS", "URDF", "vendored copy matches dimOS's model")]
-    return [Check("PASS", "URDF", f"{vendored.name} (dimOS model not downloaded yet)")]
+        return [Check("PASS", "URDF", "vendored copy matches the runtime's model")]
+    return [Check("PASS", "URDF", f"{vendored.name} (runtime model not downloaded yet)")]
 
 
 def check_fk() -> list[Check]:
@@ -266,9 +266,9 @@ def read_pin(path: Path) -> str | None:
     return None
 
 
-def check_dimos(station: StationConfig, probe: Probe) -> list[Check]:
+def check_runtime(station: StationConfig, probe: Probe) -> list[Check]:
     checks: list[Check] = []
-    root = station.dimos_root_path()
+    root = station.runtime_root_path()
     if not probe.which("uv"):
         checks.append(Check("FAIL", "uv", "not on PATH", "install uv >= 0.9.25 (https://docs.astral.sh/uv/)"))
     else:
@@ -277,9 +277,9 @@ def check_dimos(station: StationConfig, probe: Probe) -> list[Check]:
         checks.append(
             Check(
                 "FAIL",
-                "dimOS checkout",
+                "runtime checkout",
                 f"missing: {root}",
-                "clone it from deploy/dimos/dual-collection.bundle (see docs/RUNBOOK.md)",
+                "re-run deploy/install.sh (it sets up the pinned runtime; see docs/RUNBOOK.md)",
             )
         )
         return checks
@@ -289,55 +289,55 @@ def check_dimos(station: StationConfig, probe: Probe) -> list[Check]:
         checks.append(
             Check(
                 "FAIL",
-                "dimOS commit",
+                "runtime commit",
                 head.output or "not a git checkout",
-                "dimOS must be a git clone (it resolves data and the LeRobot env through .git)",
+                "the runtime must be a git clone (it resolves data and the LeRobot env through .git)",
             )
         )
     elif pinned and head.stdout.strip() != pinned:
         checks.append(
             Check(
                 "FAIL",
-                "dimOS commit",
+                "runtime commit",
                 f"{head.stdout.strip()[:10]} != pinned {pinned[:10]}",
-                f"git -C {root} checkout {pinned[:10]}  (KiteOS hooks into dimOS internals at that commit)",
+                f"git -C {root} checkout {pinned[:10]}  (KiteOS depends on runtime internals at that commit)",
             )
         )
     else:
-        checks.append(Check("PASS", "dimOS commit", head.stdout.strip()[:10] + (" (pinned)" if pinned else "")))
+        checks.append(Check("PASS", "runtime commit", head.stdout.strip()[:10] + (" (pinned)" if pinned else "")))
         dirty = probe.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], timeout=30.0)
         if dirty.ok and dirty.stdout.strip():
             checks.append(
                 Check(
                     "WARN",
-                    "dimOS tree",
+                    "the runtime tree",
                     "has local modifications",
-                    "KiteOS never edits dimOS; `git -C <dimos> diff` to review",
+                    "KiteOS never edits the runtime; `git -C <runtime checkout> diff` to review",
                 )
             )
-    imported = probe.imported_dimos_root()
+    imported = probe.imported_runtime_root()
     if imported is None:
         checks.append(
             Check(
                 "FAIL",
-                "dimOS import",
-                "dimos is not importable",
+                "runtime import",
+                "the runtime package is not importable",
                 f"run kiteos from {root}/.venv (uv pip install --no-deps -e <kiteos>)",
             )
         )
     elif imported.resolve() != root.resolve():
-        checks.append(Check("WARN", "dimOS import", f"imports dimOS from {imported}", f"station dimos_root is {root}"))
+        checks.append(Check("WARN", "runtime import", f"imports the runtime from {imported}", f"station runtime_root is {root}"))
     else:
-        checks.append(Check("PASS", "dimOS import", str(imported)))
+        checks.append(Check("PASS", "runtime import", str(imported)))
 
-    listing = probe.dimos("list")
+    listing = probe.runtime("list")
     if not listing.ok:
         checks.append(
             Check(
                 "FAIL",
-                "blueprints",
-                listing.output[-300:] or "`dimos list` failed",
-                f"cd {root} && uv run --no-sync dimos list",
+                "setups",
+                listing.output[-300:] or "`kiteos-runtime list` failed",
+                f"cd {root} && uv run --no-sync kiteos-runtime list",
             )
         )
     else:
@@ -347,14 +347,14 @@ def check_dimos(station: StationConfig, probe: Probe) -> list[Check]:
             checks.append(
                 Check(
                     "FAIL",
-                    "blueprints",
-                    f"dimOS does not see {', '.join(missing)}",
+                    "setups",
+                    f"the runtime does not see {', '.join(missing)}",
                     f"uv pip install --python {root}/.venv/bin/python --no-deps -e {repo_root()}  "
-                    "(never plain `uv sync` in dimOS afterwards)",
+                    "(never a plain `uv sync` in the runtime checkout afterwards)",
                 )
             )
         else:
-            checks.append(Check("PASS", "blueprints", ", ".join(EXPECTED_BLUEPRINTS)))
+            checks.append(Check("PASS", "setups", ", ".join(EXPECTED_BLUEPRINTS)))
 
     recorder = root / RECORDER_BINARY
     if probe.is_executable(recorder):
@@ -410,11 +410,11 @@ def check_can(station: StationConfig, probe: Probe) -> list[Check]:
             Check(
                 "WARN",
                 "CAN",
-                f"not checked: a dimOS stack is running ({escape(running[0][:120])})",
+                f"not checked: a robot stack is running ({escape(running[0][:120])})",
                 "re-run `kiteos doctor` after `kiteos stop` to check the adapters",
             )
         ]
-    listing = probe.dimos("hardware", "can", "list")
+    listing = probe.runtime("hardware", "can", "list")
     if not listing.ok:
         return [Check("WARN", "CAN", listing.output[-300:] or "listing failed", "needed only with --real")]
     checks = []
@@ -512,7 +512,7 @@ def check_data(station: StationConfig, probe: Probe) -> list[Check]:
                 "WARN",
                 "Hugging Face",
                 "not logged in (needed for `kiteos upload`)",
-                f"{station.dimos_root_path()}/.venv/bin/hf auth login",
+                f"{station.runtime_root_path()}/.venv/bin/hf auth login",
             )
         )
     checkpoint = station.checkpoint_path()
@@ -544,7 +544,7 @@ def run_doctor(
     checks += check_fence(station)
     checks += check_urdf(station, probe)
     checks += check_fk()
-    checks += check_dimos(station, probe)
+    checks += check_runtime(station, probe)
     checks += check_can(station, probe)
     checks += check_cameras(station, probe)
     checks += check_adb(station, probe)
@@ -553,7 +553,7 @@ def run_doctor(
 
 
 def doctor(station: StationOption = None) -> None:
-    """Check the host, dimOS, the station and fence files, and the attached devices."""
+    """Check the host, the runtime, the station and fence files, and the attached devices."""
     checks = run_doctor(station or STATE.station)
     for item in checks:
         status_line(item.level, item.name, item.detail, item.fix)

@@ -1,8 +1,8 @@
 # Copyright 2026 Kite ML.
-"""FencedWholeBodyAdapter: fence enforcement at the dimOS whole-body adapter boundary.
+"""FencedWholeBodyAdapter: fence enforcement at the runtime's whole-body adapter boundary.
 
-The first group drives the adapter with a fake inner adapter (no dimOS runtime needed beyond the
-message types). The last test runs dimOS's real MockWholeBodyAdapter behind ConnectedWholeBody, the
+The first group drives the adapter with a fake inner adapter (nothing from the runtime needed beyond the
+message types). The last test runs the runtime's real MockWholeBodyAdapter behind ConnectedWholeBody, the
 exact path the coordinator's tick loop uses, and checks the arm never crosses the fence.
 """
 
@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 import yaml
 
-pytestmark = pytest.mark.dimos
-pytest.importorskip("dimos", reason="needs the dimOS virtualenv")
+pytestmark = pytest.mark.runtime
+pytest.importorskip("dimos", reason="needs the KiteOS runtime virtualenv")
 
 from dimos.hardware.whole_body.spec import (  # noqa: E402
     POS_STOP,
@@ -64,7 +64,7 @@ def q14(
 
 
 def commands(q: Sequence[float], *, kp=WB_KP, kd=WB_KD, dq: float = 0.0) -> list[MotorCommand]:
-    """Commands as dimOS's ConnectedWholeBody builds them (dq = 0, tau = 0, wb_config gains)."""
+    """Commands as the runtime's ConnectedWholeBody builds them (dq = 0, tau = 0, wb_config gains)."""
     return [
         MotorCommand(q=float(v), dq=dq, kp=float(p), kd=float(d), tau=0.0)
         for v, p, d in zip(q, kp, kd, strict=True)
@@ -88,7 +88,7 @@ class FakeClock:
 
 
 class FakeInner:
-    """Minimal whole-body adapter: records writes; motors follow commands like dimOS's mock."""
+    """Minimal whole-body adapter: records writes; motors follow commands like the runtime's mock."""
 
     def __init__(self, positions: Sequence[float]) -> None:
         self.states = [MotorState(q=float(q)) for q in positions]
@@ -177,7 +177,7 @@ def glass_config(**kw: Any) -> FenceConfig:
 # --------------------------------------------------------------------------- basics
 
 
-def test_implements_the_dimos_protocol_and_delegates():
+def test_implements_the_runtime_protocol_and_delegates():
     rig = Rig(FenceConfig(), activate=False)
     assert isinstance(rig.fenced, WholeBodyAdapter)
     assert rig.fenced.is_connected() and rig.fenced.has_motor_states()
@@ -543,10 +543,10 @@ def test_check_positions_and_waypoints():
     assert not rig.fenced.check_waypoints(names, [[0.0, 1.0]]).ok
 
 
-# --------------------------------------------------------------------------- dimOS mock, end to end
+# --------------------------------------------------------------------------- the runtime's mock, end to end
 
 
-def test_dimos_mock_through_connected_whole_body_never_crosses_the_plane():
+def test_runtime_mock_through_connected_whole_body_never_crosses_the_plane():
     from dimos.control.hardware_interface import ConnectedWholeBody
     from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
@@ -673,7 +673,7 @@ def test_gripper_cannot_open_while_the_arm_is_inside_and_closing_is_allowed():
 
 
 def test_a_held_arm_does_not_move_later_when_only_the_gripper_is_commanded():
-    """dimOS's ConnectedWholeBody re-sends the last PRE-fence arm target on partial writes. After a
+    """The runtime's ConnectedWholeBody re-sends the last PRE-fence arm target on partial writes. After a
     hold (gripper open), gripper-only commands closing the fingers used to make that stale target
     valid, and the arm drove 0.2 rad toward the glass with nothing commanding it."""
     from dimos.control.hardware_interface import ConnectedWholeBody

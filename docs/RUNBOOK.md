@@ -1,7 +1,7 @@
 # KiteOS runbook: dual OpenYAM station
 
 The morning checklist for macOS and Linux. Commands assume the default layout that `deploy/install.sh` creates under `~/teleop_stack` (KiteOS,
-the base runtime checkout and `policies/`) and a configured `config/station.yaml`.
+the base runtime checkout `kiteos-runtime/` and `policies/`) and a configured `config/station.yaml`.
 Details: fence in [FENCE.md](FENCE.md), install in [README](../README.md#quickstart).
 
 > **The one rule:** stopping KiteOS (including Ctrl-C in the stack terminal, a crash, or the
@@ -220,3 +220,22 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
 | Collection fails at start mentioning `nix` | Recorder binary missing | Re-run `install.sh` without `--no-recorder` |
 | First rollout or upload stalls for minutes | LeRobot environment being built | One-off. Pre-warm with `install.sh` (without `--no-prewarm`) |
 | macOS: background (daemon) runs crash | Known pyarrow fork issue on macOS | KiteOS always runs in the foreground; keep T1 open |
+| `kiteos run <setup>` refuses without `--real` | KiteOS has not checked that this setup, in this mode, moves no real robot | Use a mode `kiteos list` shows for it (mock, `--sim`, `--replay`), or `--real` for the robot itself |
+| `kiteos run` refuses a robot address or `.env` setting | Mock, sim and replay runs take no robot address | Remove it from the base runtime checkout's `.env`; pass addresses only to `--real` runs |
+
+## Other robots and setups
+
+The station runs the dual OpenYAM, but KiteOS carries every setup of the base runtime: other arms,
+quadrupeds, humanoids, drones, sensor rigs and simulators (see the README's Embodiments section).
+
+- `kiteos list` shows them by robot and how each runs without hardware. Filter with
+  `kiteos list -e xarm`.
+- `kiteos run <setup>` starts one on mock hardware where KiteOS has checked it can. Use `--sim`
+  for the MuJoCo simulator (`--engine dimsim` for DimSim) or `--replay` for recorded data.
+  Arguments after `--` go to the runtime.
+- `kiteos status` shows what runs on this host; `kiteos stop` stops it.
+- `kiteos run <setup> --real` drives another robot **without the KiteOS fence**: only that robot's
+  own limits apply. You must type the station name to confirm, and someone must be at its e-stop.
+  Never run one next to the customer's glass.
+- The dual OpenYAM's real arms run only through `kiteos teleop`, `collect` and `rollout`, which
+  enforce the fence. `kiteos run` refuses them.

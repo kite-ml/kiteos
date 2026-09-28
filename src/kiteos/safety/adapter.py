@@ -1,12 +1,12 @@
 # Copyright 2026 Kite ML.
-"""KiteOS fence enforcement at dimOS's whole-body adapter boundary.
+"""KiteOS fence enforcement at the runtime's whole-body adapter boundary.
 
-Every command source in a dimOS ``ControlCoordinator`` (Quest teleop IK, policy trajectories, the
+Every command source in a runtime ``ControlCoordinator`` (Quest teleop IK, policy trajectories, the
 gripper tasks, the ``joint_command`` stream) ends in one ``write_motor_commands`` call per tick.
 ``FencedWholeBodyAdapter`` wraps the real (or mock) adapter at exactly that point and, per arm:
 
 1. rejects non-finite or implausible targets (hold);
-2. holds a *stale* target: an arm request that is bit-for-bit the one it last refused (dimOS
+2. holds a *stale* target: an arm request that is bit-for-bit the one it last refused (the runtime
    re-sends the last pre-fence target of every joint a command does not mention) stays refused
    until a different request arrives, so a held arm never drives off by itself later;
 3. clamps the target to the URDF limits minus ``joint_limit_margin_rad`` and rate-limits it
@@ -60,7 +60,7 @@ RATE_DT_MIN_S = 0.001
 RATE_DT_MAX_S = 0.02
 
 # Arm joint ranges are within +/-3.7 rad; anything beyond this is a sentinel or garbage
-# (e.g. dimOS's POS_STOP = 2.146e9), never something to clamp and chase.
+# (e.g. the runtime's POS_STOP = 2.146e9), never something to clamp and chase.
 MAX_PLAUSIBLE_TARGET_RAD = 4.0 * math.pi
 
 LOG_INTERVAL_S = 1.0
@@ -191,7 +191,7 @@ class _ArmPlan:
 
 
 class FencedWholeBodyAdapter:
-    """dimOS ``WholeBodyAdapter`` that enforces the KiteOS fence before the inner adapter.
+    """the runtime ``WholeBodyAdapter`` that enforces the KiteOS fence before the inner adapter.
 
     Args:
         inner: The adapter to protect (``MockWholeBodyAdapter``, the Damiao adapter, ...).
@@ -435,7 +435,7 @@ class FencedWholeBodyAdapter:
 
         Joints missing from ``joint_names`` stay at their current target; gripper columns (if any)
         set the finger inflation. Routes checked: current -> waypoint 0 -> ... -> last, and
-        current -> waypoint 1 -> ... -> last, the path dimOS's trajectory task takes when it
+        current -> waypoint 1 -> ... -> last, the path the runtime's trajectory task takes when it
         anchors waypoint 0 at the current command. When an arm already starts within the margin,
         a route passes only as an escape (``FenceChecker.check_escape_path``). Never raises.
         """
@@ -473,7 +473,7 @@ class FencedWholeBodyAdapter:
     def rewrite_applied(self, msg: JointState) -> JointState | None:
         """Replace commanded positions by what was actually written, so recordings are truthful.
 
-        Called with dimOS's ``applied_joint_position_command`` message right after a successful
+        Called with the runtime's ``applied_joint_position_command`` message right after a successful
         write. Returns a new message, or ``None`` when no truthful message can be produced (the
         caller must then drop it rather than record pre-fence targets).
         """
@@ -978,7 +978,7 @@ class FencedWholeBodyAdapter:
                     q[k] = float(wp[c])
             opening = float(wp[grip_col]) if grip_col is not None else opening_now
             path.append((q, opening))
-        # dimOS's trajectory task either follows current -> waypoint 0 -> ... or, when it anchors
+        # the runtime's trajectory task either follows current -> waypoint 0 -> ... or, when it anchors
         # waypoint 0 at its current command, current -> waypoint 1 -> ...: both routes must pass.
         routes: list[list[tuple[str, np.ndarray, np.ndarray, float | None]]] = []
         for first in (0, 1) if len(path) > 1 else (0,):
