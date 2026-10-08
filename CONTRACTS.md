@@ -262,9 +262,27 @@ policy: {checkpoint: ~/teleop_stack/policies/act-close-box-step30000, device: au
 # ...plus the base runtime checkout location (see config/station.yaml)
 viser_host: 127.0.0.1
 quest: {port: 8080, upstream: https://127.0.0.1:8443, adb: auto}
+carry: {max_speed_m_s: 0.25, max_accel_m_s2: 1.0, max_yaw_rate_deg_s: 60, yaw: follow,  # the Quest carry lock
+        max_tilt_error_deg: 3}                                                          # (kiteos.teleop.carry)
 ```
 `StationConfig.load(path=None)`, `.can_port(side)`, `.camera(role)` resolve by `sys.platform`
 ("darwin"/"linux"; other -> "linux" values), expanding `~`. `.fence_path()` absolute.
+
+## Teleop tasks (kiteos.teleop) — added in 0.1.4
+- Control-task type `kiteos_teleop_ik` = the runtime's `teleop_ik` (Quest controller poses -> Pink IK
+  target per gripper) plus a per-arm carry lock; factory `kiteos.teleop.carry:create_task`, the same
+  input streams (`left/right_cartesian_command`, `teleop_buttons`). It accepts two `task_invoke`
+  commands: `set_carry_lock(hand, locked)` and `carry_status()`. Both robots' teleop tasks use it
+  (`teleop_dual_openyam`, `teleop_openarm`).
+- Registration: `FencedCoordinatorMixin._create_task_from_config` calls
+  `kiteos.teleop.tasks.register_kiteos_tasks()` (import paths only) and injects the coordinator's
+  `carry_*` fields (`KiteCarrySettings`, flags `--controlcoordinator.carry-max-speed-m-s` ...; the
+  CLI passes the station's `carry:` section) as the task's `carry` params. Coordinator modules
+  never import `kiteos.teleop.carry` (the policy's isolated env unpickles them; it has no IK stack).
+- Lock semantics: the thumbstick press toggles that hand. The lock captures the gripper's MEASURED pose,
+  holds its tilt (yaw follows unless `yaw: lock`), and moves it with speed/acceleration limits. The
+  watchdog stops following past `max_tilt_error_deg`. Release re-anchors without a jump. The lock
+  survives the deadman. Vertical = the robot base frame's +z.
 
 ## CLI (`kiteos`, Typer) — prints a KiteOS banner; all commands support --station PATH
 - `kiteos doctor` — environment, pinned base runtime commit, KiteOS setups registered, recorder binary,

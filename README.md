@@ -31,6 +31,9 @@ What KiteOS provides:
   would record the wrong camera (or the built-in or iPhone one).
 - **Branded Quest teleop.** A KiteOS page served to a USB-tethered Meta Quest through a local proxy
   that keeps `adb reverse` applied. It works offline, with no Wi-Fi.
+- **Carry lock.** Click a controller's thumbstick and that gripper keeps its tilt while you carry
+  something that must not spill, such as a full 96-well plate. It follows the hand gently and only
+  turns about the vertical. Click again to release (`carry:` in the station file).
 - **Collection, upload and rollout tooling.** Episode controls, graceful stop (SIGTERM only; the
   recorder gets 100 s to finalize), private-by-default Hugging Face upload, and a dual-arm, 3-camera
   policy runtime with start-jump and speed guards.
@@ -179,6 +182,30 @@ LeRobot's, on the converted dataset; KiteOS rolls out the checkpoint it writes.
 
 `kiteos-runtime` is the base runtime's own command line under the KiteOS name. KiteOS uses it to
 start every stack. Run directly, it applies none of the gates above; it is for advanced use.
+
+## Custom behaviour
+
+There are two places to add your own behaviour, depending on how often it has to act:
+
+- **Between motions: a script.** A script attaches to the running stack and calls its RPCs: move
+  the arms (`execute_trajectory`), start and save episodes, run the policy, read the fence. It never
+  sits in the control loop. [tools/openarm_workflow.py](tools/openarm_workflow.py) is a complete
+  example.
+- **On every control tick: a control task.** Anything that changes how the arms respond to the
+  operator or the policy, such as keeping a plate level, runs inside the coordinator, 100 times a
+  second. KiteOS adds its own task types to the base runtime's task registry
+  (`kiteos.teleop.tasks`). The carry lock (`kiteos.teleop.carry`) is one: the runtime's Quest IK task
+  with its targets reshaped. It exposes `task_invoke` commands, so scripts can drive it too (attach
+  to a mock run's private bus first, as the tools script does):
+
+```python
+cc = Dimos.connect().get_module("ControlCoordinator")
+cc.task_invoke("teleop_openarm", "set_carry_lock", {"hand": "left", "locked": True})
+cc.task_invoke("teleop_openarm", "carry_status", {})
+```
+
+The task is `teleop_dual_openyam` on the dual OpenYAM. The safety fence stays below both, in
+the adapter every command passes.
 
 ## Base runtime
 

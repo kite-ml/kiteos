@@ -27,8 +27,11 @@ Run with ``kiteos teleop`` (it calls ``kiteos-runtime run kiteos.dual-openyam-te
 the coordinator drives mock arms. The viser viewer binds 127.0.0.1; expose it
 with ``--manipulationmodule.visualization.host 0.0.0.0``. The Quest WebXR server
 also binds 127.0.0.1 (``KiteArmTeleopModule``; the Quest reaches it over USB
-through ``kiteos quest proxy``).
+through ``kiteos quest proxy``). The Quest IK task is the KiteOS one with the carry lock
+(``kiteos.teleop.carry``: a thumbstick press keeps that gripper level).
 """
+
+from dataclasses import replace
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -54,6 +57,7 @@ from kiteos.blueprints.manipulation import KiteManipulationModule
 from kiteos.blueprints.webxr import INSTANCE_NAME as ARM_TELEOP_INSTANCE_NAME
 from kiteos.blueprints.webxr import KiteArmTeleopModule
 from kiteos.safety.coordinator import KiteDualOpenYamCoordinator
+from kiteos.teleop.tasks import KITEOS_TELEOP_IK
 
 COORDINATOR_INSTANCE_NAME = "ControlCoordinator"
 MANIPULATION_INSTANCE_NAME = "manipulationmodule"  # keeps the --manipulationmodule.* flags
@@ -70,6 +74,7 @@ DUAL_OPENYAM_WEBXR_PINK = PinkKinematicsConfig(
     gain=1.0,
 )
 DUAL_OPENYAM_WEBXR_MODEL = dual_openyam_model_config()
+# The runtime's teleop IK task as the KiteOS type (the same task plus the carry lock).
 DUAL_OPENYAM_WEBXR_TASK = teleop_ik_task(
     dual_openyam_hardware(),
     robot_model=DUAL_OPENYAM_WEBXR_MODEL,
@@ -95,6 +100,7 @@ DUAL_OPENYAM_WEBXR_TASK = teleop_ik_task(
         "joint_command_filter_cutoff_hz": 30.0,
     },
 )
+DUAL_OPENYAM_WEBXR_TASK = replace(DUAL_OPENYAM_WEBXR_TASK, type=KITEOS_TELEOP_IK)
 
 # Quest controller poses drive the IK task's per-arm Cartesian targets.
 ARM_TELEOP_CONTROLLER_REMAPPINGS: list[tuple[str, str, str]] = [

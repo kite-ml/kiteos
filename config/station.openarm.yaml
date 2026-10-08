@@ -49,3 +49,12 @@ quest:
   port: 8080
   upstream: https://127.0.0.1:8443
   adb: auto
+
+# Carry lock: click a controller's thumbstick to keep that gripper level (a full 96-well plate);
+# click again to release. A locked gripper follows the hand gently and turns only about the vertical.
+carry:
+  max_speed_m_s: 0.25
+  max_accel_m_s2: 1.0
+  max_yaw_rate_deg_s: 60
+  yaw: follow                      # follow | lock (no turning while locked)
+  max_tilt_error_deg: 3            # stop following the hand while the gripper is this far off level

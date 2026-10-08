@@ -20,14 +20,14 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config, openarm_hardware
 
 from kiteos.robots import OPENARM
-from kiteos.safety.coordinator import FencedCoordinatorMixin, KiteFenceSettings
+from kiteos.safety.coordinator import FencedCoordinatorMixin, KiteCarrySettings, KiteFenceSettings
 
 # The runtime's OPENARM_WEBXR_TASK_NAME (asserted equal by the tests): the IK task that gets the model.
 OPENARM_TELEOP_TASK_NAME = "teleop_openarm"
 
 
-class KiteOpenArmCoordinatorConfig(ControlCoordinatorConfig, KiteFenceSettings):
-    """Both OpenArm CAN ports (or none, for mock arms) plus the KiteOS fence settings."""
+class KiteOpenArmCoordinatorConfig(ControlCoordinatorConfig, KiteFenceSettings, KiteCarrySettings):
+    """Both OpenArm CAN ports (or none, for mock arms) plus the KiteOS fence and carry-lock settings."""
 
     left_can_port: str | None = None
     right_can_port: str | None = None

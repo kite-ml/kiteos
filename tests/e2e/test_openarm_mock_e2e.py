@@ -20,14 +20,18 @@ test_mock_fence_e2e.py: private bus only, never CAN flags, expect-mock pinned.
 
 from __future__ import annotations
 
+import asyncio
+import math
 import os
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
+import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +43,21 @@ runtime_pkg = pytest.importorskip("dimos", reason="needs the KiteOS runtime virt
 
 from dimos.core.global_config import global_config  # noqa: E402
 from dimos.core.transport_factory import make_transport  # noqa: E402
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped  # noqa: E402
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion  # noqa: E402
+from dimos.msgs.geometry_msgs.Vector3 import Vector3  # noqa: E402
 from dimos.msgs.sensor_msgs.JointState import JointState  # noqa: E402
+from dimos.msgs.sensor_msgs.Joy import Joy  # noqa: E402
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory  # noqa: E402
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint  # noqa: E402
+from dimos.teleop.utils.teleop_transforms import WEBXR_TO_ROBOT_FRAME  # noqa: E402
+from scipy.spatial.transform import Rotation  # noqa: E402
 
 from kiteos.robots import OPENARM  # noqa: E402
 from kiteos.safety.fence import FenceChecker, FenceConfig  # noqa: E402
+from kiteos.safety.kinematics import DualArmKinematics  # noqa: E402
+from kiteos.safety.openarm_coordinator import OPENARM_TELEOP_TASK_NAME  # noqa: E402
+from kiteos.teleop.carry import tilt_between  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 BLUEPRINT = "kiteos.openarm-teleop"
@@ -56,6 +69,8 @@ READY = [-0.5, 0, 0, 1.2, 0, 0, 0] + [0.5, 0, 0, 1.2, 0, 0, 0]
 THROUGH_LEFT = [-1.2, 0, 0, 0.3, 0, 0, 0]
 REACH_LEFT = [-1.57, 0, 0, 0, 0, 0, 0]
 STARTUP_TIMEOUT_S = 150.0
+CARRY_SPEED_M_S = 0.3  # a non-default station value: it must reach the teleop task
+CARRY_MOVE = np.array([0.10, 0.0, 0.05])
 SHUTDOWN_TIMEOUT_S = 60.0
 
 
@@ -122,6 +137,7 @@ def run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Run]:
         "--manipulationmodule.fence-path", str(fence),
         "--controlcoordinator.require-fence-on-hardware", "true",
         "--controlcoordinator.expect-mock", "true",
+        "--controlcoordinator.carry-max-speed-m-s", str(CARRY_SPEED_M_S),
         "--armteleopmodule.server-port", str(webxr),
         "--manipulationmodule.visualization.port", str(viser),
         "--viewer", "none",
@@ -208,6 +224,119 @@ def _settled(cc: Any, timeout: float = 10.0) -> np.ndarray:
     return previous
 
 
+@dataclass
+class QuestHand:
+    """One controller, in the ROBOT frame (the server maps the WebXR pose back to this)."""
+
+    position: np.ndarray
+    rotation: Rotation = field(default_factory=Rotation.identity)
+    grip: bool = True
+    thumb: bool = False
+
+
+class FakeQuest:
+    """The Quest teleop page's side of the WebXR websocket: LCM PoseStamped + Joy frames at 50 Hz.
+
+    It is what teleop.js sends, so a run goes through the real ArmTeleopModule (pose transform,
+    button packing) into the coordinator's teleop task. ``animate`` changes the hands under its lock.
+    """
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.hands = {"left": QuestHand(np.array([0.3, 0.2, 1.0])), "right": QuestHand(np.array([0.3, -0.2, 1.0]))}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._connected = threading.Event()
+        self.error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def __enter__(self) -> FakeQuest:
+        self._thread.start()
+        if not self._connected.wait(20.0):
+            pytest.fail(f"could not connect to the WebXR server on port {self.port}: {self.error!r}")
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        with self._lock:
+            for hand in self.hands.values():
+                hand.grip = hand.thumb = False
+        time.sleep(0.3)  # the released grips reach the task: the session ends cleanly
+        self._stop.set()
+        self._thread.join(timeout=5.0)
+
+    def animate(self, seconds: float, update: Any) -> None:
+        t0 = time.monotonic()
+        while (t := time.monotonic() - t0) < seconds:
+            if self.error is not None:
+                pytest.fail(f"the fake Quest lost its connection: {self.error!r}")
+            with self._lock:
+                update(t)
+            time.sleep(0.01)
+
+    def _frames(self) -> list[bytes]:
+        frames = []
+        for side, hand in self.hands.items():
+            robot = np.eye(4)
+            robot[:3, :3] = hand.rotation.as_matrix()
+            robot[:3, 3] = hand.position
+            webxr = np.linalg.inv(WEBXR_TO_ROBOT_FRAME) @ robot  # invert the server's webxr_to_robot
+            turn = Rotation.from_euler("z", 90 if side == "left" else -90, degrees=True).as_matrix()
+            webxr[:3, :3] = webxr[:3, :3] @ turn.T
+            x, y, z, w = Rotation.from_matrix(webxr[:3, :3]).as_quat()
+            pose = PoseStamped(
+                ts=time.time(),
+                frame_id=side,
+                position=Vector3(*map(float, webxr[:3, 3])),
+                orientation=Quaternion(float(x), float(y), float(z), float(w)),
+            )
+            # axes: stick x, stick y, trigger, grip; buttons: trigger, grip, touchpad, thumbstick, X/A, Y/B, menu
+            joy = Joy(
+                frame_id=side,
+                axes=[0.0, 0.0, 0.0, 1.0 if hand.grip else 0.0],
+                buttons=[0, int(hand.grip), 0, int(hand.thumb), 0, 0, 0],
+            )
+            frames += [pose.lcm_encode(), joy.lcm_encode()]
+        return frames
+
+    def _run(self) -> None:
+        try:
+            asyncio.run(self._stream())
+        except BaseException as exc:  # reported by animate / __enter__
+            self.error = exc
+
+    async def _stream(self) -> None:
+        import aiohttp
+
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE  # the WebXR server's self-signed certificate
+        url = f"wss://127.0.0.1:{self.port}/ws"
+        deadline = time.monotonic() + 20.0
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    ws = await session.ws_connect(url, ssl=context)
+                    break
+                except aiohttp.ClientError:
+                    if time.monotonic() > deadline:
+                        raise
+                    await asyncio.sleep(0.5)
+            async with ws:
+                self._connected.set()
+                while not self._stop.is_set():
+                    with self._lock:
+                        frames = self._frames()
+                    for frame in frames:
+                        await ws.send_bytes(frame)
+                    await asyncio.sleep(0.02)
+
+
+def _gripper(cc: Any, kinematics: DualArmKinematics) -> tuple[np.ndarray, Quaternion]:
+    named = cc.get_joint_positions()
+    pose = kinematics.link_poses("left", [named[n] for n in LEFT])["ee_base_link"]
+    return pose[:3, 3].copy(), Quaternion.from_rotation_matrix(pose[:3, :3])
+
+
 def test_openarm_fence_end_to_end(run: Run) -> None:
     client = _connect(run)
     checker = FenceChecker(FenceConfig.load(run.fence))
@@ -274,6 +403,36 @@ def test_openarm_fence_end_to_end(run: Run) -> None:
         assert "ACCEPTED" in str(home.status), home
         target = checker.clamp_to_limits("left", np.zeros(7)).tolist() + checker.clamp_to_limits("right", np.zeros(7)).tolist()
         assert _wait_near(cc, target, 15.0), cc.get_joint_positions()
+
+        # ---- E: the carry lock through the Quest's own protocol (a fake headset on the WebXR port)
+        carry = cc.task_invoke(OPENARM_TELEOP_TASK_NAME, "carry_status", {})
+        assert carry["settings"]["max_speed_m_s"] == CARRY_SPEED_M_S, carry  # the station flag reached the task
+        kinematics = DualArmKinematics(robot="openarm")
+        with FakeQuest(run.webxr_port) as quest:
+            left = quest.hands["left"]
+            quest.animate(1.0, lambda t: None)  # both grips held: the teleop session engages
+            before = _gripper(cc, kinematics)
+            start = left.position.copy()
+
+            def lock_then_tilt_and_move(t: float) -> None:
+                left.thumb = 0.5 <= t < 0.65  # thumbstick click: lock the left gripper
+                s = min(1.0, max(0.0, (t - 1.0) / 2.0))  # then tilt the hand 30 degrees and move it
+                left.position = start + s * CARRY_MOVE
+                left.rotation = Rotation.from_rotvec([math.radians(30.0) * s, 0.0, 0.0])
+
+            quest.animate(5.0, lock_then_tilt_and_move)
+            locked = _gripper(cc, kinematics)
+            status = cc.task_invoke(OPENARM_TELEOP_TASK_NAME, "carry_status", {})["hands"]["left"]
+            assert status["locked"] and not status["holding"], status
+            assert math.degrees(tilt_between(locked[1], before[1])) < 1.0  # the plate stayed level
+            np.testing.assert_allclose(locked[0] - before[0], CARRY_MOVE, atol=0.005)  # and followed the hand
+            quest.animate(1.0, lambda t: setattr(left, "thumb", 0.2 <= t < 0.35))  # release, hand still tilted
+            released = _gripper(cc, kinematics)
+            assert not cc.task_invoke(OPENARM_TELEOP_TASK_NAME, "carry_status", {})["hands"]["left"]["locked"]
+            assert math.degrees(tilt_between(released[1], locked[1])) < 0.5  # no jump on release
+            assert float(np.linalg.norm(released[0] - locked[0])) < 0.002
+        log = run.log()
+        assert "left arm carry lock ON (thumbstick)" in log and "left arm carry lock OFF (thumbstick)" in log
     finally:
         client.stop()
 

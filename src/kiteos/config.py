@@ -36,6 +36,14 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 from kiteos.robots import DEFAULT_ROBOT, RobotKey, RobotProfile, get_robot
+from kiteos.teleop.tasks import (
+    CARRY_MAX_ACCEL_M_S2,
+    CARRY_MAX_SPEED_M_S,
+    CARRY_MAX_TILT_ERROR_DEG,
+    CARRY_MAX_YAW_RATE_DEG_S,
+    CARRY_YAW,
+    CarryYaw,
+)
 from kiteos.yamlio import load_yaml_unique
 
 Side = Literal["left", "right"]
@@ -131,6 +139,19 @@ class QuestConfig(_Model):
         return not (self.adb is False or str(self.adb).lower() in {"off", "no", "none", "false"})
 
 
+class CarryConfig(_Model):
+    """The Quest carry lock: a thumbstick press keeps that arm's gripper level (kiteos.teleop.carry)."""
+
+    # How fast a locked gripper follows the hand: position, and the turn about the vertical.
+    max_speed_m_s: float = Field(CARRY_MAX_SPEED_M_S, gt=0, le=1.0)
+    max_accel_m_s2: float = Field(CARRY_MAX_ACCEL_M_S2, gt=0, le=10.0)
+    max_yaw_rate_deg_s: float = Field(CARRY_MAX_YAW_RATE_DEG_S, gt=0, le=360.0)
+    # "follow": the gripper still turns about the vertical with the hand; "lock": it does not.
+    yaw: CarryYaw = CARRY_YAW
+    # Stop following the hand's position while the measured tilt is this far from the lock.
+    max_tilt_error_deg: float = Field(CARRY_MAX_TILT_ERROR_DEG, gt=0, le=30.0)
+
+
 class StationConfig(_Model):
     """Validated contents of a station YAML file."""
 
@@ -148,6 +169,7 @@ class StationConfig(_Model):
     runtime_root: str = DEFAULT_RUNTIME_ROOT
     viser_host: str = "127.0.0.1"
     quest: QuestConfig = QuestConfig()
+    carry: CarryConfig = CarryConfig()
 
     _source: Path | None = PrivateAttr(default=None)
     _local: Path | None = PrivateAttr(default=None)

@@ -140,6 +140,23 @@ class LaunchPlan:
         return f"cd {shlex.quote(str(self.cwd))} && {' '.join(exports)} " + shlex.join(self.argv)
 
 
+def carry_flags(station: StationConfig) -> list[str]:
+    """The station's ``carry:`` section as coordinator flags (``KiteCarrySettings``)."""
+    carry = station.carry
+    return [
+        f"--{COORDINATOR_FLAG}.carry-max-speed-m-s",
+        f"{carry.max_speed_m_s:g}",
+        f"--{COORDINATOR_FLAG}.carry-max-accel-m-s2",
+        f"{carry.max_accel_m_s2:g}",
+        f"--{COORDINATOR_FLAG}.carry-max-yaw-rate-deg-s",
+        f"{carry.max_yaw_rate_deg_s:g}",
+        f"--{COORDINATOR_FLAG}.carry-yaw",
+        carry.yaw,
+        f"--{COORDINATOR_FLAG}.carry-max-tilt-error-deg",
+        f"{carry.max_tilt_error_deg:g}",
+    ]
+
+
 def camera_flag(role: str) -> str:
     return f"--{role.replace('_', '-')}.hardware.camera-index"
 
@@ -186,6 +203,8 @@ def build_runtime_command(
         f"--{COORDINATOR_FLAG}.expect-mock",
         "false" if real else "true",
     ]
+    if spec.package:  # a KiteOS setup: its coordinator takes the Quest carry-lock settings
+        argv += carry_flags(station)
 
     if real:
         for side in SIDES:

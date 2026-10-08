@@ -362,6 +362,9 @@ def test_fence_holds_mock_arms_end_to_end(mock_run: MockRun) -> None:
         assert hw["real_hardware"] is False and hw["adapter"] == "MockWholeBodyAdapter", hw
         assert hw["mode"] == "enforce" and [z["name"] for z in hw["zones"]] == [ZONE]
         assert hw["holds"] == 0 and status["trajectory_cancels"] == 0
+        # The Quest IK task is the KiteOS one with the carry lock (kiteos.teleop.carry), nothing locked.
+        carry = cc.task_invoke("teleop_dual_openyam", "carry_status", {})
+        assert {h: v["locked"] for h, v in carry["hands"].items()} == {"left": False, "right": False}, carry
         start = cc.get_joint_positions()
         np.testing.assert_allclose(_left(start), HOME, atol=1e-9)
         summary["fence_status_initial"] = {

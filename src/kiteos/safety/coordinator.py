@@ -22,6 +22,11 @@ gaps the fence cannot close alone:
   arrive on the tick thread under the coordinator's non re-entrant hardware lock, where calling
   RPCs would deadlock, so the event handler only records and signals.
 
+The mixin also builds the KiteOS task types (``kiteos.teleop.tasks``). It registers them with the
+runtime's task registry, by import path, when a task of such a type is created. The Quest teleop task
+``kiteos_teleop_ik`` (the carry lock) gets its settings from the ``carry_*`` fields
+(``KiteCarrySettings``).
+
 Runs inside a runtime forkserver worker: the classes are pickled by reference and this module is
 imported there, so it has no import-time side effects beyond defining classes. A policy's
 reference to the coordinator is also unpickled in the runtime's isolated LeRobot environment,
@@ -36,10 +41,14 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
 
+from pydantic import Field
+
 from dimos.control.components import HardwareComponent
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     TrajectoryExecutionResult,
@@ -66,6 +75,16 @@ from kiteos.safety.fence import (
     real_hardware_problems,
 )
 from kiteos.safety.kinematics import ARM_SIDES
+from kiteos.teleop.tasks import (
+    CARRY_MAX_ACCEL_M_S2,
+    CARRY_MAX_SPEED_M_S,
+    CARRY_MAX_TILT_ERROR_DEG,
+    CARRY_MAX_YAW_RATE_DEG_S,
+    CARRY_YAW,
+    KITEOS_TELEOP_IK,
+    CarryYaw,
+    register_kiteos_tasks,
+)
 
 logger = setup_logger()
 
@@ -103,6 +122,30 @@ class KiteFenceSettings(BaseConfig):
     expect_mock: bool = False
 
 
+class KiteCarrySettings(BaseConfig):
+    """The carry lock of the KiteOS Quest teleop task (``kiteos.teleop.carry``), per station.
+
+    Every KiteOS coordinator config adds these; the station file's ``carry:`` section sets them
+    (``--controlcoordinator.carry-max-speed-m-s`` ...).
+    """
+
+    carry_max_speed_m_s: float = Field(CARRY_MAX_SPEED_M_S, gt=0)
+    carry_max_accel_m_s2: float = Field(CARRY_MAX_ACCEL_M_S2, gt=0)
+    carry_max_yaw_rate_deg_s: float = Field(CARRY_MAX_YAW_RATE_DEG_S, gt=0)
+    carry_yaw: CarryYaw = CARRY_YAW
+    carry_max_tilt_error_deg: float = Field(CARRY_MAX_TILT_ERROR_DEG, gt=0)
+
+    def carry_settings(self) -> dict[str, Any]:
+        """The ``carry`` params of a ``kiteos_teleop_ik`` task."""
+        return {
+            "max_speed_m_s": self.carry_max_speed_m_s,
+            "max_accel_m_s2": self.carry_max_accel_m_s2,
+            "max_yaw_rate_deg_s": self.carry_max_yaw_rate_deg_s,
+            "yaw": self.carry_yaw,
+            "max_tilt_error_deg": self.carry_max_tilt_error_deg,
+        }
+
+
 class FencedCoordinatorMixin:
     """The KiteOS fence for a runtime coordinator of ``ROBOT`` (put it first in the bases)."""
 
@@ -128,6 +171,16 @@ class FencedCoordinatorMixin:
         self._episode_cancelled = False
         self._fence_log_last: dict[str, float] = {}
         self._fence_log_suppressed: dict[str, int] = {}
+
+    # ------------------------------------------------------------------ tasks
+
+    def _create_task_from_config(self, cfg: TaskConfig) -> Any:
+        """The runtime's task factory, plus the KiteOS task types (``kiteos.teleop.tasks``)."""
+        if cfg.type.lower() == KITEOS_TELEOP_IK:
+            register_kiteos_tasks()
+            if isinstance(self.config, KiteCarrySettings):
+                cfg = replace(cfg, params={**cfg.params, "carry": self.config.carry_settings()})
+        return super()._create_task_from_config(cfg)  # type: ignore[misc]
 
     # ------------------------------------------------------------------ hardware
 
@@ -660,8 +713,8 @@ def _single_point_trajectory(msg: Any) -> JointTrajectory | None:
 # --------------------------------------------------------------------------- robots
 
 
-class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig, KiteFenceSettings):
-    """``DualOpenYamCoordinatorConfig`` plus the KiteOS fence settings (``KiteFenceSettings``)."""
+class KiteDualOpenYamCoordinatorConfig(DualOpenYamCoordinatorConfig, KiteFenceSettings, KiteCarrySettings):
+    """``DualOpenYamCoordinatorConfig`` plus the KiteOS fence and carry-lock settings."""
 
 
 class KiteDualOpenYamCoordinator(FencedCoordinatorMixin, DualOpenYamCoordinator):

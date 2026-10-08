@@ -31,7 +31,7 @@ from kiteos.cli.can import parse_gs_usb_list, parse_ip_brief
 from kiteos.cli.collect import delete_last_saved, latest_session, next_free_session
 from kiteos.cli.evaluate import parse_episodes
 from kiteos.cli.quest import proxy_argv
-from kiteos.config import StationConfig, repo_root
+from kiteos.config import StationConfig, StationError, repo_root
 
 REPO = Path(__file__).resolve().parents[1]
 LEFT_SERIAL = "006C003E4845500F20303750"
@@ -161,6 +161,28 @@ def test_placeholder_camera_rejected(site: Path, monkeypatch: pytest.MonkeyPatch
         launch.build_runtime_command(station, "collection", real=False, fence_path=None)
     plan = launch.build_runtime_command(station, "collection", real=False, fence_path=None, cameras=False)
     assert not any("camera-index" in a for a in plan.argv)
+
+
+def test_station_carry_settings_become_coordinator_flags(site: Path) -> None:
+    data = yaml.safe_load(site.read_text())
+    data["carry"] = {"max_speed_m_s": 0.15, "yaw": "lock"}
+    site.write_text(yaml.safe_dump(data))
+    argv = launch.build_runtime_command(load(site), "teleop", real=False, fence_path=None).argv
+    flag = lambda name: argv[argv.index(f"--controlcoordinator.{name}") + 1]  # noqa: E731
+    assert (flag("carry-max-speed-m-s"), flag("carry-yaw")) == ("0.15", "lock")
+    assert (flag("carry-max-accel-m-s2"), flag("carry-max-yaw-rate-deg-s"), flag("carry-max-tilt-error-deg")) == (
+        "1",
+        "60",
+        "3",
+    )
+    # The runtime's own setups (kiteos run) have no KiteOS coordinator: no carry flags.
+    runtime = launch.BlueprintSpec("unitree-go2", False, "a runtime setup", package=None)
+    assert not any("carry" in a for a in launch.build_runtime_command(load(site), runtime, real=False, fence_path=None).argv)
+    for bad in ({"yaw": "spin"}, {"max_speed_m_s": 0}, {"max_speed_m_s": 2.0}, {"tilt": 3}):
+        data["carry"] = bad
+        site.write_text(yaml.safe_dump(data))
+        with pytest.raises(StationError):
+            load(site)
 
 
 def test_viser_host_flag_only_when_exposed(site: Path) -> None:

@@ -130,6 +130,18 @@ hand on the e-stop throughout. Full procedure and background: [FENCE.md](FENCE.m
   The `--real` prompt shows the station and fence files and the zones, and asks you to type the
   station name.
 - T3 + headset as in section 5.
+- **Carry lock** (a full 96-well plate, anything that must not tilt).
+  - **Lock.** Close the gripper on the plate, level it, then click that controller's thumbstick. The
+    gripper keeps the tilt it has now, whatever your wrist does, and still turns about the vertical.
+    It follows your hand at most 0.25 m/s, so a jerk does not slosh the wells.
+  - **Release.** Click again. The gripper does not move when you release; it follows your hand from
+    there.
+  - **Grips.** Releasing the grips (the deadman) keeps the lock on. Keep the trigger held as usual,
+    or the gripper opens.
+  - **Out of reach.** If the arm cannot follow your hand without tilting, it stops following until
+    it is level again, and T1 logs it. Bring your hand back.
+  - **Settings.** T1 logs every lock and release. Tune the lock in the station file's `carry:`
+    section.
 - **Only one stack per host.** Every start command refuses while another robot stack runs on this
   machine. That includes stacks started outside KiteOS, such as `kite_rollout`. The check uses
   the runtime's run registry, the KiteOS run files, a process scan, the 8443/8095 listeners and, for

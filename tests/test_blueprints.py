@@ -39,6 +39,7 @@ from dimos.robot.manipulators.dual_openyam.joints import (  # noqa: E402
 from dimos.utils.data import LfsPath  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
+from kiteos.teleop.tasks import KITEOS_TELEOP_IK  # noqa: E402
 from kiteos.rollout.module import (  # noqa: E402
     CAMERA_FEATURES,
     DualArmPolicyConfig,
@@ -193,9 +194,23 @@ def test_teleop_matches_the_runtime_blueprint_except_the_coordinator(teleop):
     ]
     ours_parsed, theirs_parsed = _parse(ours), _parse(theirs)
     for name in TELEOP_INSTANCES:
-        assert _comparable(ours_parsed.module_kwargs(name)) == _comparable(
+        assert _as_runtime_tasks(_comparable(ours_parsed.module_kwargs(name))) == _comparable(
             theirs_parsed.module_kwargs(name)
         ), name
+    # The one intended difference: the Quest IK task is the KiteOS type (the same task plus the carry lock).
+    tasks = {task.name: task for task in _atoms(ours)["ControlCoordinator"].kwargs["tasks"]}
+    assert tasks["teleop_dual_openyam"].type == KITEOS_TELEOP_IK
+
+
+def _as_runtime_tasks(kwargs: Any) -> Any:
+    """Parsed coordinator kwargs with the KiteOS teleop IK type written as the runtime's ``teleop_ik``."""
+    if not isinstance(kwargs, dict) or "tasks" not in kwargs:
+        return kwargs
+    tasks = [
+        {**task, "type": "teleop_ik"} if isinstance(task, dict) and task.get("type") == KITEOS_TELEOP_IK else task
+        for task in kwargs["tasks"]
+    ]
+    return {**kwargs, "tasks": tasks}
 
 
 def test_teleop_viser_is_local_by_default_and_can_be_opened(teleop):
@@ -300,6 +315,10 @@ def test_collection_mirrors_the_runtime_blueprint(collection):
             # KiteOS defaults to the lab rig's mapping (the runtime enumerates the roles 0, 1, 2).
             assert ours_kwargs["hardware"]["camera_index"] == collection.DEFAULT_CAMERA_INDICES[name]
             ours_kwargs["hardware"]["camera_index"] = theirs_kwargs["hardware"]["camera_index"]
+        if name == "ControlCoordinator":
+            # The Quest IK task is the KiteOS type (the runtime's task plus the carry lock).
+            assert any(task.get("type") == KITEOS_TELEOP_IK for task in ours_kwargs["tasks"])
+            ours_kwargs = _as_runtime_tasks(ours_kwargs)
         assert ours_kwargs == theirs_kwargs, name
 
 

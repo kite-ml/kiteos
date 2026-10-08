@@ -82,6 +82,7 @@ from kiteos.blueprints.teleop import (
 )
 from kiteos.robots import OPENARM
 from kiteos.safety.openarm_coordinator import OPENARM_TELEOP_TASK_NAME, KiteOpenArmCoordinator
+from kiteos.teleop.tasks import KITEOS_TELEOP_IK
 
 ROBOT_TYPE = OPENARM.robot_type
 
@@ -102,10 +103,13 @@ OPENARM_WEBXR_PINK = PinkKinematicsConfig(
 
 
 def openarm_teleop_task() -> TaskConfig:
-    """Both Quest controllers drive one bimanual IK task (the coordinator adds the model)."""
+    """Both Quest controllers drive one bimanual IK task (the coordinator adds the model).
+
+    The KiteOS type: the runtime's teleop IK task plus the carry lock (``kiteos.teleop.carry``).
+    """
     return TaskConfig(
         name=OPENARM_TELEOP_TASK_NAME,
-        type="teleop_ik",
+        type=KITEOS_TELEOP_IK,
         priority=20,
         joint_names=list(OPENARM_ARM_JOINTS),
         params={
