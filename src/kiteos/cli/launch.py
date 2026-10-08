@@ -41,6 +41,7 @@ from rich.table import Table
 
 from kiteos.cli import runs
 from kiteos.cli._common import confirm_typed, console, die, kiteos_env, note, runtime_argv, warn
+from kiteos.cli.cameras import missing_station_cameras
 from kiteos.config import CAMERA_ROLES, SIDES, StationConfig, is_mock_camera, is_placeholder, platform_key
 from kiteos.robots import DUAL_OPENYAM, ROBOTS, RobotProfile, get_robot
 
@@ -405,6 +406,22 @@ def station_ports(station: StationConfig) -> tuple[int, int]:
 host_stacks: Callable[..., list[runs.Evidence]] = runs.other_stacks
 bus_probe: Callable[..., runs.BusProbe] = runs.probe_bus
 record_run: Callable[[runs.RunState], Any] = runs.write_run_state
+cameras_missing: Callable[[StationConfig], str | None] = missing_station_cameras
+
+
+def refuse_missing_cameras(station: StationConfig, *, dry_run: bool) -> None:
+    """Refuse a setup that records cameras unless the station's cameras are connected.
+
+    On macOS a missing USB camera would shift every index, so a role would record the wrong camera
+    (see ``missing_station_cameras``). A dry run only warns.
+    """
+    problem = cameras_missing(station)
+    if problem is None:
+        return
+    if dry_run:
+        warn(problem)
+        return
+    die(problem, code=2)
 
 
 def refuse_other_stacks(station: StationConfig, plan: LaunchPlan, *, allow_concurrent: bool, dry_run: bool) -> None:
@@ -569,6 +586,8 @@ def launch(
 
     if not plan.cwd.is_dir() and not dry_run:
         die(f"runtime checkout not found at {plan.cwd} (station: runtime_root)", code=2)
+    if plan.blueprint.has_cameras and cameras:
+        refuse_missing_cameras(station, dry_run=dry_run)
 
     refuse_other_stacks(station, plan, allow_concurrent=allow_concurrent, dry_run=dry_run)
 

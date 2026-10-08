@@ -26,7 +26,7 @@ from kiteos import __version__
 from kiteos.cli import app, doctor, launch, stop, upload
 from kiteos.cli import fence as fence_cli
 from kiteos.cli._common import STATE, CmdResult, kiteos_pythonpath
-from kiteos.cli.cameras import enumerate_darwin, enumerate_linux
+from kiteos.cli.cameras import enumerate_darwin, enumerate_linux, missing_station_cameras
 from kiteos.cli.can import parse_gs_usb_list, parse_ip_brief
 from kiteos.cli.collect import delete_last_saved, latest_session, next_free_session
 from kiteos.cli.evaluate import parse_episodes
@@ -629,6 +629,76 @@ def test_camera_enumeration_never_opens_devices() -> None:
     no_ids = json.dumps({"SPCameraDataType": [{"_name": "USB Camera"}, {"_name": "FaceTime"}]})
     assert {c.selector for c in enumerate_darwin(lambda argv, timeout: CmdResult(0, no_ids, ""))} == {"?"}
     assert enumerate_darwin(lambda argv, timeout: CmdResult(1, "", "boom")) == []
+
+
+def profiler(*names: str) -> Any:
+    """A fake ``system_profiler SPCameraDataType -json`` listing these cameras."""
+    listing = json.dumps({"SPCameraDataType": [{"_name": n, "spcamera_unique-id": f"id{i}"} for i, n in enumerate(names)]})
+    return lambda argv, timeout: CmdResult(0, listing, "")
+
+
+def never_listed(*_args: Any, **_kwargs: Any) -> Any:
+    raise AssertionError("the cameras were listed")
+
+
+def test_missing_cameras_on_macos_counts_only_usb_cameras(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    station = load(site)
+    problem = missing_station_cameras(station, profiler("MacBook Pro Camera", "iPhone (136) Camera"))
+    assert problem is not None and problem.startswith("0 of the station's 3 USB cameras are connected")
+    assert "not counted: MacBook Pro Camera, iPhone (136) Camera" in problem and "cover test" in problem
+    two = missing_station_cameras(station, profiler("USB Camera", "Studio Display Camera", "C920", "OBS Virtual Camera"))
+    assert two is not None and two.startswith("2 of the station's 3")
+    assert missing_station_cameras(station, profiler("USB Camera", "C920", "Arducam", "MacBook Pro Camera")) is None
+    failed = missing_station_cameras(station, lambda argv, timeout: CmdResult(1, "", "boom"))
+    assert failed is not None and "system_profiler failed" in failed
+
+
+def test_missing_cameras_skips_mock_roles(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    data = yaml.safe_load(site.read_text())
+    data["cameras"]["top"] = {"darwin": "mock", "linux": "mock"}
+    site.write_text(yaml.safe_dump(data))
+    assert missing_station_cameras(load(site), profiler("USB Camera", "C920")) is None  # two roles, two cameras
+    for role in ("left_wrist", "right_wrist"):
+        data["cameras"][role] = {"darwin": "mock", "linux": "mock"}
+    site.write_text(yaml.safe_dump(data))
+    assert missing_station_cameras(load(site), never_listed) is None
+
+
+def test_missing_cameras_on_linux_needs_every_device(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    data = yaml.safe_load(site.read_text())
+    data["cameras"]["top"]["linux"] = 4  # an index is /dev/video4
+    site.write_text(yaml.safe_dump(data))
+    present = {"/dev/v4l/by-path/left", "/dev/video4"}
+    problem = missing_station_cameras(load(site), never_listed, exists=present.__contains__)
+    assert problem is not None and "right_wrist (/dev/v4l/by-path/right)" in problem and "left_wrist" not in problem
+    present.add("/dev/v4l/by-path/right")
+    assert missing_station_cameras(load(site), never_listed, exists=present.__contains__) is None
+
+
+def test_collect_and_rollout_refuse_to_start_without_the_cameras(
+    site: Path, executed: list[launch.LaunchPlan], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    asked: list[str] = []
+
+    def missing(station: StationConfig) -> str:
+        asked.append(station.station)
+        return "0 of the station's 3 USB cameras are connected"
+
+    monkeypatch.setattr(launch, "cameras_missing", missing)
+    # Refused before the typed --real confirmation (no input is given).
+    result = invoke(site, "collect", "start", "--real")
+    assert result.exit_code == 2 and "0 of the station's 3 USB cameras" in result.output
+    result = invoke(site, "rollout", "start", "--device", "cpu")
+    assert result.exit_code == 2 and "USB cameras" in result.output
+    assert executed == []
+    dry = invoke(site, "collect", "start", "--dry-run")  # a dry run only warns
+    assert dry.exit_code == 0 and "0 of the station's 3 USB cameras" in dry.output
+    assert len(asked) == 3
+    assert invoke(site, "teleop").exit_code == 0 and len(asked) == 3  # teleop records no camera
 
 
 def test_quest_proxy_argv(site: Path) -> None:

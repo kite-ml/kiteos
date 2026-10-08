@@ -53,6 +53,11 @@ blocking failures. Fix every blocking item before any `--real` run.
   On macOS the index shown is OpenCV's probable order (sorted by unique ID). It includes the
   built-in and iPhone cameras, and it is only a hint: the cover test decides.
 - `kiteos cameras check` opens a live view with a sharpness meter per role (`1/2/3` zoom, `q` quits).
+- **Start gate.** `collect` and `rollout` refuse to start unless the station's cameras are connected
+  (`--dry-run` only warns). On macOS that means one USB camera per role, not counting the built-in,
+  iPhone, display or virtual cameras: the roles are numbers in one list of every camera, so with one
+  missing the numbers shift and a role would record the wrong camera. On Linux every camera path
+  must exist. The gate cannot tell which camera is which: the cover test does that.
 - **Cover test** (daily, and whenever a cable or the hub moves): run `kiteos cameras check` and cover each
   lens in turn. The matching role (`left_wrist`, `right_wrist`, `top`) must go dark. If not, fix
   `cameras.<role>` in the station file.

@@ -3,7 +3,8 @@
 
 ``list`` only enumerates devices (it never opens a camera). ``check`` opens the three station
 cameras in a live window with a sharpness meter; it needs a desktop session and, on macOS, a
-terminal with camera permission.
+terminal with camera permission. ``missing_station_cameras`` is the start gate of the setups that
+record cameras (collect, rollout).
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -22,12 +24,17 @@ from rich.table import Table
 
 from kiteos import brand
 from kiteos.cli._common import StationOption, console, die, load_station, note, run_capture
-from kiteos.config import CAMERA_ROLES, StationConfig, is_placeholder, platform_key
+from kiteos.config import CAMERA_ROLES, StationConfig, is_mock_camera, is_placeholder, platform_key
 
 app = typer.Typer(help="Find and focus the station cameras.", no_args_is_help=True)
 
 WIDTH, HEIGHT, FPS = 640, 480, 30
 ROI = (WIDTH // 4, HEIGHT // 4, 3 * WIDTH // 4, 3 * HEIGHT // 4)  # centre box: x0, y0, x1, y1
+# macOS cameras that are never station cameras: the built-in one, an iPhone or iPad (Continuity,
+# Desk View), a display's camera and virtual (software) cameras.
+NON_STATION_CAMERA = re.compile(
+    r"(?i)facetime|macbook|built-?in|iphone|ipad|continuity|desk view|studio display|virtual"
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,17 @@ def enumerate_linux(globber: Callable[[str], list[str]] = glob.glob) -> list[Cam
     return devices
 
 
+def darwin_camera_entries(runner: Callable[..., Any] = run_capture) -> list[dict[str, Any]] | None:
+    """system_profiler's camera entries (no camera is opened); None when it cannot be read."""
+    result = runner(["system_profiler", "SPCameraDataType", "-json"], timeout=30.0)
+    if not result.ok:
+        return None
+    try:
+        return [e for e in json.loads(result.stdout).get("SPCameraDataType", []) if isinstance(e, dict)]
+    except (ValueError, AttributeError):
+        return None
+
+
 def enumerate_darwin(runner: Callable[..., Any] = run_capture) -> list[CameraDevice]:
     """Cameras from system_profiler (never opened), with their PROBABLE OpenCV index.
 
@@ -56,13 +74,7 @@ def enumerate_darwin(runner: Callable[..., Any] = run_capture) -> list[CameraDev
     the index shown is that sort (``?`` when the unique ID is missing). It is a hint: confirm the
     mapping with the cover test (`kiteos cameras check`).
     """
-    result = runner(["system_profiler", "SPCameraDataType", "-json"], timeout=30.0)
-    if not result.ok:
-        return []
-    try:
-        entries = [e for e in json.loads(result.stdout).get("SPCameraDataType", []) if isinstance(e, dict)]
-    except (ValueError, AttributeError):
-        return []
+    entries = darwin_camera_entries(runner) or []
     ids = [str(e.get("spcamera_unique-id", "")) for e in entries]
     order = {uid: i for i, uid in enumerate(sorted(u for u in ids if u))} if all(ids) else {}
     devices = []
@@ -81,6 +93,58 @@ def enumerate_cameras() -> list[CameraDevice]:
 
 def station_cameras(station: StationConfig) -> list[tuple[str, int | str | None]]:
     return [(role, station.camera(role)) for role in CAMERA_ROLES]
+
+
+def missing_station_cameras(
+    station: StationConfig,
+    runner: Callable[..., Any] = run_capture,
+    exists: Callable[[str], bool] = os.path.exists,
+) -> str | None:
+    """Why the station's cameras are not all connected, or None when they are (none is opened).
+
+    ``mock`` roles need no camera (placeholders are refused before this). On Linux every role's
+    device must exist. On macOS the roles are OpenCV indices into one list of all the cameras, so
+    with a USB camera missing the numbers shift and a role would record another camera, or the
+    built-in or iPhone one: at least one USB camera per role must be connected. Which camera
+    each role gets is still the cover test's to confirm (`kiteos cameras check`).
+    """
+    roles = {
+        role: selector
+        for role, selector in station_cameras(station)
+        if selector is not None and not is_placeholder(selector) and not is_mock_camera(selector)
+    }
+    if not roles:
+        return None
+    if platform_key() == "linux":
+        paths = {
+            role: f"/dev/video{selector}" if isinstance(selector, int) or str(selector).isdigit() else str(selector)
+            for role, selector in roles.items()
+        }
+        missing = [f"{role} ({path})" for role, path in paths.items() if not exists(path)]
+        if not missing:
+            return None
+        return (
+            f"station camera {', '.join(missing)} not connected: the device does not exist. by-path names "
+            "follow the USB port, so plug the camera back into the same port, or find its name with "
+            "`kiteos cameras list`."
+        )
+    entries = darwin_camera_entries(runner)
+    if entries is None:
+        return "could not list this Mac's cameras (system_profiler failed); check them with `kiteos cameras list`"
+    names = [str(entry.get("_name", "camera")) for entry in entries]
+    usb = [name for name in names if not NON_STATION_CAMERA.search(name)]
+    if len(usb) >= len(roles):
+        return None
+    others = [name for name in names if NON_STATION_CAMERA.search(name)]
+    seen = ", ".join(usb) or "no USB camera"
+    if others:
+        seen += f" (not counted: {', '.join(others)})"
+    return (
+        f"{len(usb)} of the station's {len(roles)} USB cameras are connected ({', '.join(roles)}); this Mac sees "
+        f"{seen}. Cameras are picked by number from one list, so with one missing the numbers shift and a role "
+        "would record the wrong camera, or the built-in or iPhone one. Connect them, then confirm each role with "
+        "`kiteos cameras list` and the cover test (`kiteos cameras check`)."
+    )
 
 
 @app.command("list")

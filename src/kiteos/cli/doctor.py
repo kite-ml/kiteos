@@ -11,7 +11,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import re
 import shutil
 import sys
 from collections.abc import Callable, Sequence
@@ -33,6 +32,7 @@ from kiteos.cli._common import (
     run_capture,
     status_line,
 )
+from kiteos.cli.cameras import NON_STATION_CAMERA
 from kiteos.config import (
     CAMERA_ROLES,
     SIDES,
@@ -47,8 +47,6 @@ from kiteos.robots import DUAL_OPENYAM, OPENARM, ROBOTS, RobotProfile
 
 # Every KiteOS setup of every robot (kiteos.<robot>-<kind>).
 EXPECTED_BLUEPRINTS = tuple(f"kiteos.{name}" for robot in ROBOTS.values() for name in robot.setups.values())
-# system_profiler names of cameras that are never station cameras (built-in, iPhone Continuity).
-NON_STATION_CAMERA = re.compile(r"(?i)facetime|macbook|built-?in|iphone|ipad|continuity|desk view")
 RECORDER_BINARY = Path("dimos/experimental/memory/rust/result/bin/dimos-memory-recorder")
 RUNTIME_URDF = Path("data/dual_openyam_abc_box_v2/dual_openyam.urdf")
 PIN_FILE = Path("deploy/runtime/PIN")
@@ -559,7 +557,8 @@ def check_real_cameras(station: StationConfig, probe: Probe) -> list[Check]:
                 detail,
                 None
                 if level == "PASS"
-                else "connect the three station cameras; the built-in and iPhone (Continuity) cameras do not count",
+                else "connect the three station cameras (collect and rollout refuse to start without them); "
+                "the built-in and iPhone (Continuity) cameras do not count",
             ),
             Check(
                 "INFO",
@@ -580,7 +579,8 @@ def check_real_cameras(station: StationConfig, probe: Probe) -> list[Check]:
                         "WARN",
                         f"camera {role}",
                         f"{selector} missing",
-                        "`kiteos cameras list` shows the by-id/by-path names",
+                        "collect and rollout refuse to start without it; `kiteos cameras list` shows the "
+                        "by-id/by-path names",
                     )
                 )
     checks.append(Check("INFO", "video nodes", f"{len(nodes)} /dev/video* nodes"))

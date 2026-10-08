@@ -26,6 +26,9 @@ What KiteOS provides:
   [docs/FENCE.md](docs/FENCE.md).
 - **One stack per host, mock runs isolated.** Start commands refuse while another robot stack runs.
   Mock runs get a private bus and their own ports, and their coordinator refuses real arms.
+- **Cameras checked before recording.** `collect` and `rollout` refuse to start unless the station's
+  cameras are connected. On macOS a missing USB camera would shift every camera number, so a role
+  would record the wrong camera (or the built-in or iPhone one).
 - **Branded Quest teleop.** A KiteOS page served to a USB-tethered Meta Quest through a local proxy
   that keeps `adb reverse` applied. It works offline, with no Wi-Fi.
 - **Collection, upload and rollout tooling.** Episode controls, graceful stop (SIGTERM only; the
@@ -240,11 +243,11 @@ PYTHONPATH=src <python> -m pytest -q
 line.
 
 Tests never touch real hardware. Some tests need the base runtime's virtualenv. Tests marked
-`mock_e2e` launch the runtime with mock arms (`tests/e2e/test_mock_fence_e2e.py`, about 40 s; skip
-it with `-m "not mock_e2e"`). `tests/conftest.py` puts the whole suite on a private, per-process
+`mock_e2e` launch the runtime with mock arms (`tests/e2e`, one per fenced robot, about 75 s
+together; skip them with `-m "not mock_e2e"`). `tests/conftest.py` puts the whole suite on a private, per-process
 LCM/Zenoh bus, so a test can never reach a stack running on the default bus. The e2e test also
 refuses to run if that private bus is not in effect. Unit tests never scan the host for stacks or
-listen on a bus (the conftest stubs those probes), and KiteOS run-state files go to a temporary
+cameras, or listen on a bus (the conftest stubs those probes), and KiteOS run-state files go to a temporary
 directory. Every finding from the pre-release safety review has a regression test in the main
 suite (for example the gripper-toggle ratchet replay in `tests/fixtures/`).
 

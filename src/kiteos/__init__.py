@@ -5,5 +5,5 @@ Keep this module import-free: it is also imported inside the runtime's isolated
 LeRobot environment through PYTHONPATH.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 BRAND_NAME = "KiteOS"

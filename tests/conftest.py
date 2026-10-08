@@ -35,7 +35,7 @@ os.environ["KITEOS_RUNS_DIR"] = tempfile.mkdtemp(prefix="kiteos-test-runs-")
 
 @pytest.fixture(autouse=True)
 def _no_host_probes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unit tests never scan this host for stacks or listen on a bus (a real rig may be running).
+    """Unit tests never scan this host for stacks or cameras, or listen on a bus (a real rig may be running).
 
     Tests that exercise the probes call ``kiteos.cli.runs`` directly with fakes.
     """
@@ -43,6 +43,7 @@ def _no_host_probes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(launch, "host_stacks", lambda **_: [])
     monkeypatch.setattr(launch, "record_run", lambda state: None)
+    monkeypatch.setattr(launch, "cameras_missing", lambda station: None)  # never lists this host's cameras
     monkeypatch.setattr(
         launch, "bus_probe", lambda *_a, **_k: __import__("kiteos.cli.runs", fromlist=["BusProbe"]).BusProbe(0, [])
     )
