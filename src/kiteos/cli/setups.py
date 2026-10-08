@@ -111,7 +111,10 @@ def load_registry(station: StationConfig) -> dict[str, str]:
 
 
 def resolve_setup(name: str, registry: Mapping[str, str], plugins: Mapping[str, str] | None = None) -> Setup:
-    """The setup to run, or ``SetupRunError`` (KiteOS setups have their own commands)."""
+    """The setup to run, or ``SetupRunError`` (the fenced KiteOS setups have their own commands)."""
+    if name in embodiments.KITEOS_RUN_SETUPS:
+        target = embodiments.KITEOS_RUN_SETUPS[name]
+        return Setup(name, target, embodiments.classify(name, target))
     kiteos_names = {spec.name for _, _, spec in launch.all_setup_specs()}
     if name.startswith(f"{launch.DIST_NAME}.") or name in kiteos_names:
         raise SetupRunError(

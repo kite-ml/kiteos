@@ -59,6 +59,8 @@ EXPECTED_ENTRY_POINTS = {
     "openarm-collection": "kiteos.blueprints.openarm:openarm_collection",
     "openarm-rollout": "kiteos.blueprints.openarm:openarm_rollout",
     "openarm-rollout-recorded": "kiteos.blueprints.openarm:openarm_rollout_recorded",
+    "openyam-teleop": "kiteos.blueprints.openyam:openyam_teleop",
+    "openyam-collection": "kiteos.blueprints.openyam:openyam_collection",
 }
 TELEOP_INSTANCES = {"armteleopmodule", "ControlCoordinator", "manipulationmodule"}
 COLLECTION_INSTANCES = TELEOP_INSTANCES | set(CAMERA_ROLES) | {"recorder", "episodes"}

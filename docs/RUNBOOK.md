@@ -282,6 +282,17 @@ Embodiments section).
   for the MuJoCo simulator (`--engine dimsim` for DimSim) or `--replay` for recorded data.
   Arguments after `--` go to the runtime.
 - `kiteos status` shows what runs on this host; `kiteos stop` stops it.
+- **One-arm OpenYAM rig** (one arm, a wrist and a top camera): `kiteos run kiteos.openyam-collection`
+  is the runtime's one-arm Quest collection with the Quest server on this machine only and the top
+  camera recorded too (README, Embodiments). With `--real`, pass the arm's CAN port
+  (`--controlcoordinator.can-port`), both camera indices (check them with a frame from each, or the
+  cover test), `--recorder.recording` (a new `<session>-NNN` folder under the recordings directory)
+  and `--episodes.task`.
+  - **Controls.** The right controller drives the arm: grip = deadman, trigger = gripper, B starts
+    and saves an episode, Y discards it.
+  - **Convert.** `kiteos upload --session <session> --no-push` converts the sessions; add
+    `--repo-id` to upload them, since the station's `hub.repo_id` belongs to the dual setup.
+  - **Fence.** Not fenced by KiteOS yet.
 - `kiteos run <setup> --real` drives another robot **without the KiteOS fence**: only that robot's
   own limits apply. You must type the station name to confirm, and someone must be at its e-stop.
   Never run one next to the customer's glass.

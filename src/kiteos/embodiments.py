@@ -46,7 +46,13 @@ class Embodiment:
 
 EMBODIMENTS: tuple[Embodiment, ...] = (
     Embodiment("dual-openyam", "Dual OpenYAM (bimanual arms)", modules=("robot.manipulators.dual_openyam",), fenced=True),
-    Embodiment("openyam", "OpenYAM arm", modules=("robot.manipulators.openyam",), words=("openyam",)),
+    Embodiment(
+        "openyam",
+        "OpenYAM arm",
+        modules=("robot.manipulators.openyam",),
+        words=("openyam",),
+        setups=("kiteos.openyam-teleop", "kiteos.openyam-collection"),
+    ),
     Embodiment(
         "xarm-piper",
         "xArm6 + Piper (mixed pair)",
@@ -165,6 +171,8 @@ HARDWARE_FREE: dict[str, HardwareFree] = {
         "openyam-lerobot-quest-rollout",
         _OPENYAM,
     ),
+    # The KiteOS one-arm OpenYAM setups: mock arms unless --controlcoordinator.can-port is given.
+    **_each("kiteos.openyam-teleop kiteos.openyam-collection", HardwareFree(default=(), default_label="mock arms")),
     # A1Z (real only with a CAN port and not simulating), A-750 (mock without a device path).
     **_each(
         "a1z-planner-coordinator coordinator-a1z coordinator-teleop-a1z keyboard-teleop-a1z teleop-webxr-a1z "
@@ -257,11 +265,11 @@ def _under(module: str, prefixes: tuple[str, ...]) -> bool:
 
 def classify(name: str, target: str) -> Embodiment:
     """The embodiment of one registry entry: by name, then module, then name words, then family."""
-    if "." in name:
-        return PLUGINS
     for embodiment in EMBODIMENTS:
         if name in embodiment.setups:
             return embodiment
+    if "." in name:
+        return PLUGINS
     module = _relative_module(target)
     for embodiment in EMBODIMENTS:
         if embodiment.robot and _under(module, embodiment.modules):
@@ -297,9 +305,17 @@ def read_registry(runtime_root: Path) -> dict[str, str]:
     raise RegistryError(f"{path} has no {REGISTRY_TABLE} table")
 
 
+# KiteOS setups that `kiteos run` starts like the runtime's own (the KiteOS fence does not cover
+# them yet): name -> "module:attribute".
+KITEOS_RUN_SETUPS: dict[str, str] = {
+    "kiteos.openyam-teleop": "kiteos.blueprints.openyam:openyam_teleop",
+    "kiteos.openyam-collection": "kiteos.blueprints.openyam:openyam_collection",
+}
+
+
 def catalog(registry: Mapping[str, str], plugins: Mapping[str, str] | None = None) -> list[Setup]:
     """Every setup, classified, in embodiment order then by name."""
-    entries = [Setup(name, target, classify(name, target)) for name, target in registry.items()]
+    entries = [Setup(name, target, classify(name, target)) for name, target in {**registry, **KITEOS_RUN_SETUPS}.items()]
     entries += [Setup(name, target, PLUGINS) for name, target in (plugins or {}).items()]
     order = {key: index for index, key in enumerate(BY_KEY)}
     return sorted(entries, key=lambda s: (order[s.embodiment.key], s.name))

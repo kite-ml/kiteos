@@ -138,6 +138,23 @@ What KiteOS adds to every setup:
   refuses them. Other robots run with their own limits only. Next candidates for the fence: the
   single OpenYAM (same arm geometry as the dual OpenYAM), then xArm7 and Piper.
 
+**One-arm OpenYAM.** `kiteos.openyam-teleop` and `kiteos.openyam-collection` are the runtime's
+one-arm Quest setups (right controller) with three changes for the Kite rig:
+
+- the Quest server listens on this machine only (the runtime's listens on every interface, with no
+  login);
+- the recording adds a `top` camera next to the `wrist` camera;
+- the CAN port is the option `--controlcoordinator.can-port`.
+
+They are not fenced yet, so they start with `kiteos run`, mock arms by default:
+
+```bash
+kiteos run kiteos.openyam-collection --real -- --controlcoordinator.can-port <usb serial> \
+  --wrist.hardware.camera-index 1 --top.hardware.camera-index 0 \
+  --recorder.recording ~/teleop_stack/kiteos-runtime/recordings/<session>-001 --recorder.format mcap \
+  --episodes.task "<task>"
+```
+
 ## OpenArm
 
 [OpenArm](https://github.com/enactic/openarm) (Enactic OpenArm v2.0) is a bimanual robot: a body

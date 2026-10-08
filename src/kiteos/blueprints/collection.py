@@ -31,7 +31,7 @@ so a bare ``kiteos-runtime run`` there does not swap views, and they are wrong o
 host. Unlike the runtime blueprint, viser and the WebXR server bind 127.0.0.1.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
@@ -87,11 +87,11 @@ def camera_blueprints(
     return [camera_blueprint(role, indices.get(role)) for role in CAMERA_ROLES]
 
 
-def camera_remappings() -> list[tuple[str, str, str]]:
+def camera_remappings(roles: Sequence[str] = CAMERA_ROLES) -> list[tuple[str, str, str]]:
     """Give each camera's streams role-prefixed names (``left_wrist_image`` ...)."""
     return [
         (role, stream, f"{role}_{suffix}")
-        for role in CAMERA_ROLES
+        for role in roles
         for stream, suffix in (
             ("color_image", "image"),
             ("camera_info", "camera_info"),

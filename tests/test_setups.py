@@ -214,7 +214,9 @@ def test_checked_table_matches_the_pinned_runtime() -> None:
     if root is None:
         pytest.skip("the runtime checkout is not importable here")
     registry = embodiments.read_registry(root)
-    assert not set(HARDWARE_FREE) - set(registry), "checked setups missing from the runtime (pin moved?)"
+    kiteos_run = set(embodiments.KITEOS_RUN_SETUPS)  # KiteOS's own, run like the runtime's
+    assert not set(HARDWARE_FREE) - set(registry) - kiteos_run, "checked setups missing from the runtime (pin moved?)"
+    assert kiteos_run <= set(HARDWARE_FREE)
     assert not set(embodiments.ALWAYS_REAL_NOTES) - set(registry)
     grouped = embodiments.catalog(registry)
     assert not [s.name for s in grouped if s.embodiment is embodiments.OTHER], "classify the new setups"

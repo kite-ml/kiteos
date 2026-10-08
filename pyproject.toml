@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kiteos"
-version = "0.1.4"
+version = "0.1.5"
 description = "KiteOS: Kite's robot runtime for evaluation and data collection"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,8 @@ openarm-teleop = "kiteos.blueprints.openarm:openarm_teleop"
 openarm-collection = "kiteos.blueprints.openarm:openarm_collection"
 openarm-rollout = "kiteos.blueprints.openarm:openarm_rollout"
 openarm-rollout-recorded = "kiteos.blueprints.openarm:openarm_rollout_recorded"
+openyam-teleop = "kiteos.blueprints.openyam:openyam_teleop"
+openyam-collection = "kiteos.blueprints.openyam:openyam_collection"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kiteos"]
