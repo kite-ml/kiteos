@@ -25,6 +25,8 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
+from kiteos.blueprints.viewer_theme import install_kiteos_viewer_theme
+
 logger = setup_logger()
 
 SLAB_DEPTH_M = 0.1
@@ -94,12 +96,16 @@ class KiteManipulationModuleConfig(ManipulationModuleConfig):
 
 
 class KiteManipulationModule(ManipulationModule):
-    """``ManipulationModule`` with the fence zones as planning obstacles (drawn in viser)."""
+    """``ManipulationModule`` in the KiteOS look, with the fence zones as planning obstacles (drawn in viser)."""
 
     config: KiteManipulationModuleConfig
 
     @rpc
     def start(self) -> None:
+        try:
+            install_kiteos_viewer_theme()  # before the viewer starts
+        except Exception as exc:  # a look must never stop the stack
+            logger.warning(f"KiteOS could not theme the viewer: {exc!r}")
         super().start()
         try:
             self._add_fence_zones()

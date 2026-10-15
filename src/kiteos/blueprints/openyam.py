@@ -9,6 +9,7 @@ buttons. They change only what the Kite rig needs:
 * the Quest WebXR server binds 127.0.0.1 (``KiteArmTeleopModule``), where the runtime's binds every
   interface with no login. The Quest reaches it over USB through ``kiteos quest proxy``;
 * the recording adds the station's top camera next to the wrist camera;
+* the viewer has the KiteOS look (``kiteos.blueprints.viewer_theme``);
 * the CAN port is a coordinator option (``--controlcoordinator.can-port``; mock arms without one), so
   ``kiteos run`` can pass it (see ``kiteos.safety.openyam_coordinator``).
 
@@ -30,7 +31,6 @@ from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
 from dimos.imitation.collection.recorder import collection_recorder
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     OPENYAM_QUEST_KINEMATICS,
@@ -40,6 +40,7 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 from dimos.robot.manipulators.openyam.collection import OPENYAM_QUEST_COLLECTION
 
 from kiteos.blueprints.cameras import KiteCameraModule
+from kiteos.blueprints.manipulation import KiteManipulationModule
 from kiteos.blueprints.collection import (
     CAMERA_FPS,
     CAMERA_HEIGHT,
@@ -49,7 +50,12 @@ from kiteos.blueprints.collection import (
     CameraDevice,
     camera_remappings,
 )
-from kiteos.blueprints.teleop import ARM_TELEOP_INSTANCE_NAME, COORDINATOR_INSTANCE_NAME, arm_teleop_blueprint
+from kiteos.blueprints.teleop import (
+    ARM_TELEOP_INSTANCE_NAME,
+    COORDINATOR_INSTANCE_NAME,
+    MANIPULATION_INSTANCE_NAME,
+    arm_teleop_blueprint,
+)
 from kiteos.safety.openyam_coordinator import KiteOpenYamCoordinator
 
 OPENYAM_CAMERA_ROLES: tuple[str, ...] = ("wrist", "top")
@@ -82,7 +88,8 @@ def build_kiteos_openyam_teleop() -> Blueprint:
     return autoconnect(
         arm_teleop_blueprint(),
         KiteOpenYamCoordinator.blueprint(instance_name=COORDINATOR_INSTANCE_NAME, tasks=openyam_quest_tasks()),
-        ManipulationModule.blueprint(
+        KiteManipulationModule.blueprint(  # the runtime's viewer and planner in the KiteOS look
+            instance_name=MANIPULATION_INSTANCE_NAME,
             model=OPENYAM_QUEST_MODEL,
             kinematics=OPENYAM_QUEST_KINEMATICS,
             visualization={"backend": "viser"},
